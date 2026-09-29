@@ -8,7 +8,7 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Default Admin PIN - Change as needed
+// Admin PIN
 const ADMIN_PIN = '0525';
 
 function cleanString(str) {
@@ -17,6 +17,7 @@ function cleanString(str) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/&/g, 'and') // Normalizes '&' to 'and'
     .replace(/[^a-z0-9]/g, '')
     .trim();
 }
@@ -92,6 +93,32 @@ export default function Home() {
       .order('created_at', { ascending: false });
 
     if (data) setUserRequests(data);
+  };
+
+  // Helper matching function
+  const findDbMatch = (item) => {
+    const title = item.title || item.name;
+    const year = cleanYear(item.release_date || item.first_air_date || '');
+    const tmdbId = String(item.id);
+    const cleanItemTitle = cleanString(title);
+
+    return matchedDbItems.find(r => {
+      if (r.tmdb_id && String(r.tmdb_id) === tmdbId) return true;
+      const cleanDbTitle = cleanString(r.title);
+      const cleanDbYear = cleanYear(r.year);
+
+      const titlesMatch = cleanDbTitle === cleanItemTitle || 
+                          (cleanDbTitle.length > 4 && cleanItemTitle.includes(cleanDbTitle)) ||
+                          (cleanItemTitle.length > 4 && cleanDbTitle.includes(cleanItemTitle));
+
+      if (titlesMatch) {
+        if (cleanDbYear && year) {
+          return cleanDbYear === year;
+        }
+        return true;
+      }
+      return false;
+    });
   };
 
   // Browse Discovery (Trending / Genre Chips)
@@ -176,7 +203,7 @@ export default function Home() {
     if (dbMatches) setMatchedDbItems(dbMatches);
   };
 
-  // Fetch Trailer & Show Details
+  // Open Details Modal
   const handleOpenDetails = async (item) => {
     const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     let trailerKey = null;
@@ -199,7 +226,20 @@ export default function Home() {
     const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
 
-    const { error } = await supabase.from('requests').insert([{
+    // Guard: Prevent requesting if already exists or already requested
+    const existing = findDbMatch(item);
+    if (existing) {
+      if (existing.status === 'done') {
+        alert(`"${title}" is already on Plex!`);
+        return;
+      }
+      if (existing.status === 'pending') {
+        alert(`"${title}" has already been requested!`);
+        return;
+      }
+    }
+
+    const { data: newRow, error } = await supabase.from('requests').insert([{
       title,
       media_type: mediaType,
       year,
@@ -208,14 +248,14 @@ export default function Home() {
       requested_by: userName,
       user_email: userEmail || null,
       status: 'pending'
-    }]);
+    }]).select().single();
 
     if (error) {
       alert(`Error submitting request: ${error.message}`);
       return;
     }
 
-    // Fire Discord Notification Webhook
+    // Fire Discord Notification
     if (discordWebhook) {
       try {
         await fetch(discordWebhook, {
@@ -226,7 +266,7 @@ export default function Home() {
               title: `🎬 New Plex Request: ${title} (${year})`,
               description: `**Requested by:** ${userName}\n**Type:** ${mediaType.toUpperCase()}\n**Overview:** ${item.overview ? item.overview.slice(0, 180) + '...' : 'N/A'}`,
               thumbnail: { url: `https://image.tmdb.org/t/p/w200${item.poster_path}` },
-              color: 16098851 // Amber color
+              color: 16098851
             }]
           })
         });
@@ -237,8 +277,8 @@ export default function Home() {
 
     alert(`Requested "${title}"!`);
     await fetchUserRequests();
-    setMatchedDbItems(prev => [...prev, { title, year, status: 'pending', tmdb_id: tmdbId }]);
-    if (selectedMedia) setSelectedMedia(null);
+    setMatchedDbItems(prev => [...prev, newRow || { title, year, status: 'pending', tmdb_id: tmdbId, id: Date.now(), requested_by: userName }]);
+    setSelectedMedia(null);
   };
 
   // User Cancel Request
@@ -252,13 +292,20 @@ export default function Home() {
     }
   };
 
-  // Admin Actions
+  // Admin Actions (Note is now strictly optional)
   const updateStatus = async (id, status, note = '') => {
     const { error } = await supabase.from('requests').update({ 
       status, 
       admin_note: note 
     }).eq('id', id);
     if (!error) fetchUserRequests();
+  };
+
+  const handleDeclinePrompt = (id) => {
+    const note = prompt('Optional reason for declining (or leave blank and press OK):');
+    if (note !== null) {
+      updateStatus(id, 'declined', note.trim());
+    }
   };
 
   const saveAdminSettings = async () => {
@@ -286,13 +333,12 @@ export default function Home() {
     setShowSettings(false);
   };
 
-  // Privacy Rule: Users see their own requests; Admin sees all
+  // Privacy Rule: Users only see their own requests; Admin sees all
   const visibleRequests = userRequests.filter(r => {
     if (isAdmin) return true;
     return r.requested_by?.toLowerCase().trim() === userName?.toLowerCase().trim();
   });
 
-  // Welcome Gate
   if (!userName) {
     return (
       <main className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -327,7 +373,7 @@ export default function Home() {
 
   return (
     <div className="max-w-2xl mx-auto min-h-screen pb-24 p-4 text-slate-100 font-sans">
-      {/* Broadcast Banner */}
+      {/* Broadcast Announcement Banner */}
       {bannerActive && bannerMessage && (
         <aside aria-label="Announcement" className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-300 p-3 rounded-xl text-xs flex items-center gap-2 shadow-inner">
           <span className="text-base" aria-hidden="true">📢</span>
@@ -397,7 +443,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Quick Filter Chips (visible when not actively typing search) */}
           {!search.trim() && (
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none text-xs font-medium">
               {GENRE_CHIPS.map((chip) => (
@@ -421,19 +466,7 @@ export default function Home() {
             {results.map((item) => {
               const title = item.title || item.name;
               const year = cleanYear(item.release_date || item.first_air_date || '');
-              const tmdbId = String(item.id);
-              const cleanItemTitle = cleanString(title);
-
-              const matchingRequest = matchedDbItems.find(r => {
-                if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
-                const cleanDbTitle = cleanString(r.title);
-                const cleanDbYear = cleanYear(r.year);
-                const matches = cleanDbTitle === cleanItemTitle || 
-                                (cleanDbTitle.length > 5 && cleanItemTitle.includes(cleanDbTitle)) ||
-                                (cleanItemTitle.length > 5 && cleanDbTitle.includes(cleanItemTitle));
-                return matches && (!cleanDbYear || !year || cleanDbYear === year);
-              });
-
+              const matchingRequest = findDbMatch(item);
               const status = matchingRequest?.status?.toLowerCase().trim();
               const isUserOwner = matchingRequest?.requested_by?.toLowerCase() === userName.toLowerCase();
 
@@ -442,7 +475,6 @@ export default function Home() {
                   key={item.id} 
                   className="bg-slate-900/70 border border-slate-800/80 rounded-xl overflow-hidden flex flex-col justify-between group hover:border-slate-700 transition"
                 >
-                  {/* Poster Click opens Trailer & Details */}
                   <div 
                     onClick={() => handleOpenDetails(item)} 
                     className="relative aspect-[2/3] cursor-pointer overflow-hidden bg-slate-950"
@@ -464,7 +496,6 @@ export default function Home() {
                       <p className="text-[11px] text-slate-500">{year || 'N/A'} • {(item.media_type || (item.first_air_date ? 'tv' : 'movie')).toUpperCase()}</p>
                     </div>
 
-                    {/* Action Buttons & Plex Deep Link */}
                     {status === 'done' ? (
                       <a
                         href={`https://app.plex.tv/desktop#!/search?query=${encodeURIComponent(title)}`}
@@ -486,9 +517,9 @@ export default function Home() {
                       isUserOwner ? (
                         <button
                           onClick={() => handleCancelRequest(matchingRequest.id, title)}
-                          className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-slate-800 text-slate-400 hover:text-rose-400 transition"
+                          className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-800 transition"
                         >
-                          Cancel Request
+                          ✕ Cancel Request
                         </button>
                       ) : (
                         <span className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-slate-800/80 text-slate-500 text-center">
@@ -547,7 +578,7 @@ export default function Home() {
                   {r.status === 'pending' && r.requested_by?.toLowerCase() === userName.toLowerCase() && (
                     <button 
                       onClick={() => handleCancelRequest(r.id, r.title)}
-                      className="text-[10px] text-slate-500 hover:text-rose-400 underline"
+                      className="text-[10px] text-rose-400 hover:text-rose-300 underline"
                     >
                       Cancel
                     </button>
@@ -559,7 +590,7 @@ export default function Home() {
         </section>
       )}
 
-      {/* Admin Panel Tab */}
+      {/* Admin Tab */}
       {activeTab === 'admin' && (
         <section className="space-y-4">
           {!isAdmin ? (
@@ -586,7 +617,7 @@ export default function Home() {
             </form>
           ) : (
             <div className="space-y-6">
-              {/* Broadcast Announcement Config */}
+              {/* Broadcast Announcement */}
               <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl space-y-3">
                 <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider">Broadcast Announcement</h3>
                 <input
@@ -614,7 +645,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Discord Webhook Config */}
+              {/* Discord Webhook */}
               <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl space-y-2">
                 <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Discord Webhook Notification</h3>
                 <input
@@ -632,7 +663,7 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Request Queue Management */}
+              {/* Request Queue */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-xs text-slate-300">Active Requests Queue:</h3>
@@ -662,10 +693,7 @@ export default function Home() {
                         ⚡ In Progress
                       </button>
                       <button
-                        onClick={() => {
-                          const note = prompt('Reason for declining? (e.g. Low disk space, Not on digital yet)');
-                          if (note !== null) updateStatus(r.id, 'declined', note);
-                        }}
+                        onClick={() => handleDeclinePrompt(r.id)}
                         className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
                       >
                         ✕ Decline
@@ -680,50 +708,83 @@ export default function Home() {
       )}
 
       {/* Details & Trailer Modal */}
-      {selectedMedia && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto p-5 space-y-4">
-            <div className="flex justify-between items-start">
-              <div>
-                <h3 className="text-lg font-bold text-white">{selectedMedia.title || selectedMedia.name}</h3>
-                <p className="text-xs text-slate-400">
-                  {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()} • ★ {selectedMedia.vote_average?.toFixed(1)}
-                </p>
+      {selectedMedia && (() => {
+        const modalMatch = findDbMatch(selectedMedia);
+        const modalStatus = modalMatch?.status?.toLowerCase().trim();
+        const isUserOwner = modalMatch?.requested_by?.toLowerCase() === userName.toLowerCase();
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto p-5 space-y-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-lg font-bold text-white">{selectedMedia.title || selectedMedia.name}</h3>
+                  <p className="text-xs text-slate-400">
+                    {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()} • ★ {selectedMedia.vote_average?.toFixed(1)}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setSelectedMedia(null)} 
+                  className="text-slate-400 hover:text-white text-lg font-bold p-1"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
               </div>
-              <button 
-                onClick={() => setSelectedMedia(null)} 
-                className="text-slate-400 hover:text-white text-lg font-bold p-1"
-                aria-label="Close"
-              >
-                ✕
-              </button>
+
+              {selectedMedia.trailerKey ? (
+                <div className="aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
+                  <iframe
+                    className="w-full h-full"
+                    src={`https://www.youtube.com/embed/${selectedMedia.trailerKey}?autoplay=0`}
+                    title="Trailer"
+                    allowFullScreen
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic">No trailer video available for this title.</p>
+              )}
+
+              <p className="text-xs text-slate-300 leading-relaxed">{selectedMedia.overview || 'No synopsis available.'}</p>
+
+              {/* Dynamic Contextual Action inside Modal */}
+              {modalStatus === 'done' ? (
+                <a
+                  href={`https://app.plex.tv/desktop#!/search?query=${encodeURIComponent(selectedMedia.title || selectedMedia.name)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full block py-3 text-xs font-bold rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800 text-center hover:bg-emerald-900 transition"
+                >
+                  ▶ Open in Plex
+                </a>
+              ) : modalStatus === 'pending' ? (
+                isUserOwner ? (
+                  <button
+                    onClick={() => handleCancelRequest(modalMatch.id, selectedMedia.title || selectedMedia.name)}
+                    className="w-full bg-rose-900/60 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 rounded-xl text-xs transition"
+                  >
+                    ✕ Cancel Request
+                  </button>
+                ) : (
+                  <button
+                    disabled
+                    className="w-full bg-slate-800 text-slate-500 font-bold py-3 rounded-xl text-xs cursor-not-allowed"
+                  >
+                    Already Requested
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={() => handleRequest(selectedMedia)}
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3 rounded-xl text-xs transition"
+                >
+                  Confirm Request
+                </button>
+              )}
             </div>
-
-            {/* Embedded YouTube Trailer Player */}
-            {selectedMedia.trailerKey ? (
-              <div className="aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
-                <iframe
-                  className="w-full h-full"
-                  src={`https://www.youtube.com/embed/${selectedMedia.trailerKey}?autoplay=0`}
-                  title="Trailer"
-                  allowFullScreen
-                />
-              </div>
-            ) : (
-              <p className="text-xs text-slate-500 italic">No trailer video available for this title.</p>
-            )}
-
-            <p className="text-xs text-slate-300 leading-relaxed">{selectedMedia.overview || 'No synopsis available.'}</p>
-
-            <button
-              onClick={() => handleRequest(selectedMedia)}
-              className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3 rounded-xl text-xs transition"
-            >
-              Confirm Request
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* User Settings Modal */}
       {showSettings && (
