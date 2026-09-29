@@ -1,0 +1,250 @@
+'use client';
+import { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
+const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
+
+export default function Home() {
+  const [userName, setUserName] = useState('');
+  const [tempName, setTempName] = useState('');
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('search'); // 'search', 'list', 'admin'
+  const [adminPass, setAdminPass] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('plex_requester_name');
+    if (saved) setUserName(saved);
+    fetchRequests();
+  }, []);
+
+  const saveName = (e) => {
+    e.preventDefault();
+    if (!tempName.trim()) return;
+    localStorage.setItem('plex_requester_name', tempName.trim());
+    setUserName(tempName.trim());
+  };
+
+  const fetchRequests = async () => {
+    const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
+    if (data) setRequests(data);
+  };
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!search.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}`);
+      const data = await res.json();
+      setResults((data.results || []).filter(item => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path));
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  };
+
+  const handleRequest = async (item) => {
+    const title = item.title || item.name;
+    const year = (item.release_date || item.first_air_date || '').split('-')[0];
+    
+    await supabase.from('requests').insert([{
+      title,
+      media_type: item.media_type,
+      year,
+      poster_path: item.poster_path,
+      requested_by: userName,
+      status: 'pending'
+    }]);
+
+    alert(`Requested "${title}"!`);
+    fetchRequests();
+  };
+
+  const markDone = async (id) => {
+    await supabase.from('requests').update({ status: 'done' }).eq('id', id);
+    fetchRequests();
+  };
+
+  if (!userName) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-4">
+        <form onSubmit={saveName} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center">
+          <h1 className="text-2xl font-bold">What is your name?</h1>
+          <p className="text-slate-400 text-sm">Enter your name so we know who requested the media.</p>
+          <input
+            type="text"
+            required
+            placeholder="e.g. Dad, Sarah, Alex"
+            value={tempName}
+            onChange={(e) => setTempName(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500"
+          />
+          <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 font-semibold py-3 rounded-xl text-black">
+            Continue
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  return (
+    <div className="max-w-xl mx-auto min-h-screen pb-24 p-4">
+      {/* Top Header */}
+      <header className="flex justify-between items-center py-4 mb-2">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-amber-400">Plex Requests</h1>
+          <p className="text-xs text-slate-400">Hi, {userName}</p>
+        </div>
+        <button
+          onClick={() => { localStorage.removeItem('plex_requester_name'); setUserName(''); }}
+          className="text-xs text-slate-500 underline"
+        >
+          Change Name
+        </button>
+      </header>
+
+      {/* Tabs */}
+      <div className="flex bg-slate-900 p-1 rounded-xl mb-6 border border-slate-800 text-sm">
+        <button
+          onClick={() => setActiveTab('search')}
+          className={`flex-1 py-2 rounded-lg font-medium transition ${activeTab === 'search' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
+        >
+          Search
+        </button>
+        <button
+          onClick={() => setActiveTab('list')}
+          className={`flex-1 py-2 rounded-lg font-medium transition ${activeTab === 'list' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
+        >
+          Requests ({requests.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('admin')}
+          className={`flex-1 py-2 rounded-lg font-medium transition ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
+        >
+          Admin
+        </button>
+      </div>
+
+      {/* Search Tab */}
+      {activeTab === 'search' && (
+        <section className="space-y-6">
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Search movie or TV show..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 bg-slate-900 border border-slate-800 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500"
+            />
+            <button type="submit" className="bg-amber-500 text-slate-950 font-bold px-5 rounded-xl">
+              {loading ? '...' : 'Find'}
+            </button>
+          </form>
+
+          <div className="grid grid-cols-2 gap-4">
+            {results.map((item) => {
+              const title = item.title || item.name;
+              const year = (item.release_date || item.first_air_date || '').split('-')[0];
+              const isAlreadyRequested = requests.some(r => r.title.toLowerCase() === title.toLowerCase());
+
+              return (
+                <div key={item.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col justify-between">
+                  <img src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} alt={title} className="w-full aspect-[2/3] object-cover" />
+                  <div className="p-3 flex flex-col flex-1 justify-between">
+                    <div>
+                      <p className="font-semibold text-sm line-clamp-1">{title}</p>
+                      <p className="text-xs text-slate-400">{year} • {item.media_type.toUpperCase()}</p>
+                    </div>
+                    <button
+                      onClick={() => handleRequest(item)}
+                      disabled={isAlreadyRequested}
+                      className={`mt-3 w-full py-2 text-xs font-bold rounded-lg ${isAlreadyRequested ? 'bg-slate-800 text-slate-500' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                    >
+                      {isAlreadyRequested ? 'Requested' : 'Request'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Requests List Tab */}
+      {activeTab === 'list' && (
+        <section className="space-y-3">
+          {requests.length === 0 ? (
+            <p className="text-center text-slate-500 py-10">No requests submitted yet.</p>
+          ) : (
+            requests.map((r) => (
+              <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-2.5 rounded-xl items-center">
+                {r.poster_path ? (
+                  <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
+                ) : (
+                  <div className="w-12 h-16 bg-slate-800 rounded" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm truncate">{r.title} {r.year && <span className="text-slate-400 font-normal">({r.year})</span>}</p>
+                  <p className="text-xs text-slate-400">By: {r.requested_by}</p>
+                </div>
+                <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${r.status === 'done' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-amber-950 text-amber-400 border border-amber-800'}`}>
+                  {r.status === 'done' ? '✓ Added to Plex' : '⏳ Pending'}
+                </span>
+              </div>
+            ))
+          )}
+        </section>
+      )}
+
+      {/* Admin Tab */}
+      {activeTab === 'admin' && (
+        <section className="space-y-4">
+          {!isAdmin ? (
+            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '1234') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <p className="text-sm text-slate-300">Enter Admin PIN to manage requests (Default is 1234):</p>
+              <input
+                type="password"
+                placeholder="PIN"
+                value={adminPass}
+                onChange={(e) => setAdminPass(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded-lg text-white"
+              />
+              <button type="submit" className="w-full bg-amber-500 text-slate-950 font-bold py-2 rounded-lg text-sm">
+                Unlock Admin
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-3">
+              <h2 className="font-bold text-sm text-slate-300">Pending Requests to Add:</h2>
+              {requests.filter(r => r.status === 'pending').map((r) => (
+                <div key={r.id} className="flex justify-between items-center bg-slate-900 border border-slate-800 p-3 rounded-xl">
+                  <div>
+                    <p className="font-semibold text-sm">{r.title}</p>
+                    <p className="text-xs text-slate-400">Requested by: {r.requested_by}</p>
+                  </div>
+                  <button
+                    onClick={() => markDone(r.id)}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg"
+                  >
+                    Mark Done
+                  </button>
+                </div>
+              ))}
+              {requests.filter(r => r.status === 'pending').length === 0 && (
+                <p className="text-slate-500 text-center py-6 text-sm">All requests are completed!</p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
