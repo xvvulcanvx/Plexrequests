@@ -8,8 +8,7 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Admin PIN
-const ADMIN_PIN = '1234';
+const ADMIN_PIN = '1234'; // Your PIN
 
 function cleanString(str) {
   if (!str) return '';
@@ -28,25 +27,15 @@ function cleanYear(yr) {
   return match ? match[0] : '';
 }
 
-// Determines if a movie is likely still theatrical / not out on physical or digital yet
 function getTheatricalStatus(releaseDateStr, mediaType) {
   if (!releaseDateStr || mediaType === 'tv') return null;
   const release = new Date(releaseDateStr);
   const now = new Date();
-  
   if (isNaN(release.getTime())) return null;
 
-  // If release date is in the future
-  if (release > now) {
-    return 'Upcoming / Not Released';
-  }
-
-  // Movies typically take ~60 to 90 days from theater release to hit home digital / Blu-ray
+  if (release > now) return 'Upcoming / In Theaters';
   const diffDays = Math.floor((now - release) / (1000 * 60 * 60 * 24));
-  if (diffDays <= 75) {
-    return 'In Theaters / Pre-Digital';
-  }
-
+  if (diffDays <= 75) return 'In Theaters / Pre-Digital';
   return null;
 }
 
@@ -74,13 +63,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('search');
   
-  // Modals & Banners
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(false);
   
-  // Admin State
+  // Admin State (persisted across sessions)
   const [adminPass, setAdminPass] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [discordWebhook, setDiscordWebhook] = useState('');
@@ -90,8 +78,10 @@ export default function Home() {
   useEffect(() => {
     const savedName = localStorage.getItem('plex_requester_name');
     const savedEmail = localStorage.getItem('plex_requester_email');
+    const savedAdmin = localStorage.getItem('plex_is_admin');
     if (savedName) setUserName(savedName);
     if (savedEmail) setUserEmail(savedEmail);
+    if (savedAdmin === 'true') setIsAdmin(true);
     fetchUserRequests();
     fetchSiteSettings();
   }, []);
@@ -117,7 +107,6 @@ export default function Home() {
     if (data) setUserRequests(data);
   };
 
-  // Helper matching function
   const findDbMatch = (item) => {
     const title = item.title || item.name;
     const year = cleanYear(item.release_date || item.first_air_date || '');
@@ -125,6 +114,9 @@ export default function Home() {
     const cleanItemTitle = cleanString(title);
 
     return matchedDbItems.find(r => {
+      // Only treat active states as a match (ignore declined rows so they can be re-requested)
+      if (r.status === 'declined') return false;
+
       if (r.tmdb_id && String(r.tmdb_id) === tmdbId) return true;
       const cleanDbTitle = cleanString(r.title);
       const cleanDbYear = cleanYear(r.year);
@@ -134,16 +126,14 @@ export default function Home() {
                           (cleanItemTitle.length > 4 && cleanDbTitle.includes(cleanItemTitle));
 
       if (titlesMatch) {
-        if (cleanDbYear && year) {
-          return cleanDbYear === year;
-        }
+        if (cleanDbYear && year) return cleanDbYear === year;
         return true;
       }
       return false;
     });
   };
 
-  // Browse Discovery (Trending / Genre Chips)
+  // Browse Discovery
   useEffect(() => {
     if (search.trim()) return;
 
@@ -208,7 +198,6 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Check Supabase library for matches
   const checkDbMatches = async (items) => {
     if (!items || items.length === 0) return;
     const titlesToSearch = items.map(item => (item.title || item.name || '').trim()).filter(Boolean);
@@ -225,7 +214,6 @@ export default function Home() {
     if (dbMatches) setMatchedDbItems(dbMatches);
   };
 
-  // Open Details Modal & attach matched row directly
   const handleOpenDetails = async (item) => {
     const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     let trailerKey = null;
@@ -248,17 +236,14 @@ export default function Home() {
     const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
 
-    // Guard: Prevent requesting if already exists
     const existing = findDbMatch(item);
-    if (existing) {
-      if (existing.status === 'done') {
-        alert(`"${title}" is already on Plex!`);
-        return;
-      }
-      if (existing.status === 'pending') {
-        alert(`"${title}" has already been requested!`);
-        return;
-      }
+    if (existing && existing.status === 'done') {
+      alert(`"${title}" is already on Plex!`);
+      return;
+    }
+    if (existing && existing.status === 'pending') {
+      alert(`"${title}" is already pending!`);
+      return;
     }
 
     const { data: newRow, error } = await supabase.from('requests').insert([{
@@ -277,7 +262,7 @@ export default function Home() {
       return;
     }
 
-    // Fire Discord Notification
+    // Ping Discord
     if (discordWebhook) {
       try {
         await fetch(discordWebhook, {
@@ -286,45 +271,40 @@ export default function Home() {
           body: JSON.stringify({
             embeds: [{
               title: `🎬 New Plex Request: ${title} (${year})`,
-              description: `**Requested by:** ${userName}\n**Email:** ${userEmail || 'None provided'}\n**Type:** ${mediaType.toUpperCase()}\n**Overview:** ${item.overview ? item.overview.slice(0, 180) + '...' : 'N/A'}`,
+              description: `**Requested by:** ${userName}\n**Email:** ${userEmail || 'None'}\n**Type:** ${mediaType.toUpperCase()}`,
               thumbnail: { url: `https://image.tmdb.org/t/p/w200${item.poster_path}` },
               color: 16098851
             }]
           })
         });
       } catch (err) {
-        console.error('Discord webhook ping failed:', err);
+        console.error('Discord error:', err);
       }
     }
 
     alert(`Requested "${title}"!`);
     await fetchUserRequests();
-    setMatchedDbItems(prev => [...prev, newRow || { title, year, status: 'pending', tmdb_id: tmdbId, id: Date.now(), requested_by: userName }]);
+    setMatchedDbItems(prev => [...prev.filter(r => r.title !== title), newRow || { title, year, status: 'pending', tmdb_id: tmdbId }]);
     setSelectedMedia(null);
   };
 
-  // User Cancel Request
   const handleCancelRequest = async (id, title) => {
-    if (!confirm(`Cancel your request for "${title}"?`)) return;
+    if (!confirm(`Remove request for "${title}"?`)) return;
     const { error } = await supabase.from('requests').delete().eq('id', id);
     if (!error) {
-      fetchUserRequests();
+      await fetchUserRequests();
       setMatchedDbItems(prev => prev.filter(r => r.id !== id));
       if (selectedMedia) setSelectedMedia(null);
     }
   };
 
-  // Admin Actions (Now removes immediately from the pending queue)
-  // Admin Actions with automated email notifications
   const updateStatus = async (id, status, note = '') => {
-    // 1. Update status in Supabase
     const { error } = await supabase.from('requests').update({ 
       status, 
       admin_note: note 
     }).eq('id', id);
     
     if (!error) {
-      // Find the item to see if the user provided an email
       const targetRequest = userRequests.find(r => r.id === id);
       if (targetRequest && targetRequest.user_email) {
         try {
@@ -339,11 +319,10 @@ export default function Home() {
             })
           });
         } catch (err) {
-          console.error('Failed to trigger email notification:', err);
+          console.error('Notification error:', err);
         }
       }
 
-      // Re-fetch so the item updates on screen immediately
       await fetchUserRequests();
       setMatchedDbItems(prev => prev.map(item => item.id === id ? { ...item, status, admin_note: note } : item));
     }
@@ -354,6 +333,21 @@ export default function Home() {
     if (note !== null) {
       updateStatus(id, 'declined', note.trim());
     }
+  };
+
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (adminPass === ADMIN_PIN) {
+      setIsAdmin(true);
+      localStorage.setItem('plex_is_admin', 'true');
+    } else {
+      alert('Incorrect PIN');
+    }
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdmin(false);
+    localStorage.removeItem('plex_is_admin');
   };
 
   const saveAdminSettings = async () => {
@@ -367,7 +361,7 @@ export default function Home() {
     if (!error) {
       setBannerMessage(bannerInput);
       setBannerActive(bannerToggle);
-      alert('Settings updated successfully!');
+      alert('Settings saved!');
     }
   };
 
@@ -408,7 +402,7 @@ export default function Home() {
               onChange={(e) => setTempEmail(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500 text-sm"
             />
-            <p className="text-[11px] text-slate-500 mt-1 px-1">Optional: Provide email to receive updates on your requests.</p>
+            <p className="text-[11px] text-slate-500 mt-1 px-1">Optional: Receive updates when your request is processed.</p>
           </div>
           <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 transition">
             Start Requesting
@@ -420,7 +414,6 @@ export default function Home() {
 
   return (
     <div className="max-w-2xl mx-auto min-h-screen pb-24 p-4 text-slate-100 font-sans">
-      {/* Broadcast Announcement Banner */}
       {bannerActive && bannerMessage && (
         <aside aria-label="Announcement" className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-300 p-3 rounded-xl text-xs flex items-center gap-2 shadow-inner">
           <span className="text-base" aria-hidden="true">📢</span>
@@ -428,7 +421,6 @@ export default function Home() {
         </aside>
       )}
 
-      {/* Header */}
       <header className="flex justify-between items-center py-3 mb-2">
         <button 
           onClick={() => { setSearch(''); setActiveTab('search'); }} 
@@ -437,7 +429,7 @@ export default function Home() {
           <h1 className="text-xl font-black tracking-tight text-amber-400 group-hover:text-amber-300 transition">
             Plex Requests
           </h1>
-          <p className="text-xs text-slate-400">Welcome, {userName}</p>
+          <p className="text-xs text-slate-400">Welcome, {userName} {isAdmin && <span className="text-amber-400 font-bold">(Admin)</span>}</p>
         </button>
 
         <button 
@@ -450,7 +442,6 @@ export default function Home() {
         </button>
       </header>
 
-      {/* Navigation Tabs */}
       <nav aria-label="Main Navigation" className="flex bg-slate-900/80 backdrop-blur p-1 rounded-xl mb-5 border border-slate-800 text-xs font-semibold">
         <button
           onClick={() => setActiveTab('search')}
@@ -508,7 +499,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Media Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {results.map((item) => {
               const title = item.title || item.name;
@@ -535,7 +525,6 @@ export default function Home() {
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent opacity-80" />
                     
-                    {/* Theatrical / Availability Tag */}
                     {theatricalBadge && (
                       <span className="absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
                         {theatricalBadge}
@@ -565,10 +554,6 @@ export default function Home() {
                     ) : status === 'in_progress' ? (
                       <span className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-blue-950/70 text-blue-400 border border-blue-800 text-center">
                         ⚡ In Progress
-                      </span>
-                    ) : status === 'declined' ? (
-                      <span className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-rose-950/70 text-rose-400 border border-rose-800 text-center">
-                        ✕ Unavailable
                       </span>
                     ) : status === 'pending' ? (
                       isUserOwner ? (
@@ -632,12 +617,12 @@ export default function Home() {
                      r.status === 'declined' ? '✕ Declined' : '⏳ Pending'}
                   </span>
 
-                  {r.status === 'pending' && r.requested_by?.toLowerCase() === userName.toLowerCase() && (
+                  {(r.status === 'pending' || r.status === 'declined') && (
                     <button 
                       onClick={() => handleCancelRequest(r.id, r.title)}
-                      className="text-[10px] text-rose-400 hover:text-rose-300 underline"
+                      className="text-[10px] text-slate-500 hover:text-rose-400 underline"
                     >
-                      Cancel
+                      {r.status === 'declined' ? 'Dismiss' : 'Cancel'}
                     </button>
                   )}
                 </div>
@@ -652,28 +637,31 @@ export default function Home() {
         <section className="space-y-4">
           {!isAdmin ? (
             <form 
-              onSubmit={(e) => { 
-                e.preventDefault(); 
-                if (adminPass === ADMIN_PIN) setIsAdmin(true); 
-                else alert('Incorrect PIN'); 
-              }} 
+              onSubmit={handleAdminLogin} 
               className="space-y-3 bg-slate-900 border border-slate-800 p-5 rounded-xl shadow-xl"
             >
               <h2 className="text-sm font-bold text-white">Admin Authentication</h2>
-              <p className="text-xs text-slate-400">Welcome Alfredo, please enter your PIN:</p>
+              <p className="text-xs text-slate-400">Welcome Alfredo, enter PIN to unlock:</p>
               <input
                 type="password"
-                placeholder="Enter Admin PIN"
+                placeholder="Enter PIN"
                 value={adminPass}
                 onChange={(e) => setAdminPass(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded-lg text-white outline-none focus:border-amber-500 text-sm"
               />
               <button type="submit" className="w-full bg-amber-500 font-bold py-2 rounded-lg text-slate-950 text-xs transition">
-                Unlock Dashboard
+                Unlock Admin Dashboard
               </button>
             </form>
           ) : (
             <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-emerald-400">● Admin Unlocked</span>
+                <button onClick={handleAdminLogout} className="text-xs text-slate-400 hover:text-white underline">
+                  Lock Admin
+                </button>
+              </div>
+
               {/* Broadcast Announcement */}
               <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl space-y-3">
                 <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider">Broadcast Announcement</h3>
@@ -720,12 +708,9 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Active Pending Queue Only */}
+              {/* Active Requests Queue */}
               <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-xs text-slate-300">Active Requests Queue:</h3>
-                  <button onClick={() => setIsAdmin(false)} className="text-xs text-slate-400 underline">Lock Admin</button>
-                </div>
+                <h3 className="font-bold text-xs text-slate-300">Active Requests Queue:</h3>
 
                 {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').map((r) => (
                   <div key={r.id} className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl flex gap-3 items-center">
@@ -757,6 +742,12 @@ export default function Home() {
                         className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
                       >
                         ✕ Decline
+                      </button>
+                      <button
+                        onClick={() => handleCancelRequest(r.id, r.title)}
+                        className="text-[10px] text-slate-500 hover:text-white underline text-right"
+                      >
+                        Delete
                       </button>
                     </div>
                   </div>
@@ -819,7 +810,6 @@ export default function Home() {
 
               <p className="text-xs text-slate-300 leading-relaxed">{selectedMedia.overview || 'No synopsis available.'}</p>
 
-              {/* Dynamic Contextual Action inside Modal */}
               {modalStatus === 'done' ? (
                 <a
                   href={`https://app.plex.tv/desktop#!/search?query=${encodeURIComponent(selectedMedia.title || selectedMedia.name)}`}
@@ -845,13 +835,6 @@ export default function Home() {
                     Already Requested
                   </button>
                 )
-              ) : modalStatus === 'declined' ? (
-                <button
-                  disabled
-                  className="w-full bg-rose-950/60 text-rose-400 border border-rose-800 font-bold py-3 rounded-xl text-xs cursor-not-allowed"
-                >
-                  ✕ Marked Unavailable by Admin
-                </button>
               ) : (
                 <button
                   onClick={() => handleRequest(selectedMedia)}
