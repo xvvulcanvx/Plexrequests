@@ -25,6 +25,33 @@ export default function Home() {
     fetchRequests();
   }, []);
 
+  // Live predictive search as the user types
+  useEffect(() => {
+    if (!search.trim()) {
+      setResults([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}`
+        );
+        const data = await res.json();
+        const filtered = (data.results || []).filter(
+          item => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path
+        );
+        setResults(filtered);
+      } catch (err) {
+        console.error('Search error:', err);
+      }
+      setLoading(false);
+    }, 350); // Waits 350ms after user pauses typing
+
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const saveName = (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
@@ -33,64 +60,37 @@ export default function Home() {
   };
 
   const fetchRequests = async () => {
-    const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
-    if (error) {
-      console.error('Fetch error:', error);
-    } else if (data) {
-      setRequests(data);
-    }
-  };
-
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!search.trim()) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}`);
-      const data = await res.json();
-      setResults((data.results || []).filter(item => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path));
-    } catch (err) {
-      console.error('Search error:', err);
-    }
-    setLoading(false);
+    const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
+    if (data) setRequests(data);
   };
 
   const handleRequest = async (item) => {
     const title = item.title || item.name;
     const year = (item.release_date || item.first_air_date || '').split('-')[0];
-    
-    // Check if keys are actually present
-    if (!supabaseUrl || !supabaseKey) {
-      alert('Error: Supabase URL or Key is missing from your Vercel Environment Variables.');
-      return;
-    }
+    const tmdbId = String(item.id);
 
     const { error } = await supabase.from('requests').insert([{
       title,
       media_type: item.media_type,
       year,
       poster_path: item.poster_path,
+      tmdb_id: tmdbId,
       requested_by: userName,
       status: 'pending'
     }]);
 
     if (error) {
       alert(`Database Error: ${error.message}`);
-      console.error('Insert error:', error);
       return;
     }
 
-    alert(`Requested "${title}" successfully!`);
+    alert(`Requested "${title}" (${year})!`);
     await fetchRequests();
   };
 
   const markDone = async (id) => {
     const { error } = await supabase.from('requests').update({ status: 'done' }).eq('id', id);
-    if (error) {
-      alert(`Update Error: ${error.message}`);
-    } else {
-      fetchRequests();
-    }
+    if (!error) fetchRequests();
   };
 
   if (!userName) {
@@ -156,24 +156,32 @@ export default function Home() {
       {/* Search Tab */}
       {activeTab === 'search' && (
         <section className="space-y-6">
-          <form onSubmit={handleSearch} className="flex gap-2">
+          <div className="relative">
             <input
               type="text"
               placeholder="Search movie or TV show..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 bg-slate-900 border border-slate-800 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500"
+              className="w-full bg-slate-900 border border-slate-800 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500"
             />
-            <button type="submit" className="bg-amber-500 text-slate-950 font-bold px-5 rounded-xl">
-              {loading ? '...' : 'Find'}
-            </button>
-          </form>
+            {loading && (
+              <span className="absolute right-4 top-3.5 text-xs text-amber-400 animate-pulse">
+                Searching...
+              </span>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             {results.map((item) => {
               const title = item.title || item.name;
               const year = (item.release_date || item.first_air_date || '').split('-')[0];
-              const isAlreadyRequested = requests.some(r => r.title.toLowerCase() === title.toLowerCase());
+              const tmdbId = String(item.id);
+
+              // Fixed: Checks matching TMDB ID or title + exact year
+              const isAlreadyRequested = requests.some(r => 
+                (r.tmdb_id && r.tmdb_id === tmdbId) || 
+                (r.title.toLowerCase() === title.toLowerCase() && r.year === year)
+              );
 
               return (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col justify-between">
@@ -181,12 +189,12 @@ export default function Home() {
                   <div className="p-3 flex flex-col flex-1 justify-between">
                     <div>
                       <p className="font-semibold text-sm line-clamp-1">{title}</p>
-                      <p className="text-xs text-slate-400">{year} • {item.media_type.toUpperCase()}</p>
+                      <p className="text-xs text-slate-400">{year || 'N/A'} • {item.media_type.toUpperCase()}</p>
                     </div>
                     <button
                       onClick={() => handleRequest(item)}
                       disabled={isAlreadyRequested}
-                      className={`mt-3 w-full py-2 text-xs font-bold rounded-lg ${isAlreadyRequested ? 'bg-slate-800 text-slate-500' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                      className={`mt-3 w-full py-2 text-xs font-bold rounded-lg ${isAlreadyRequested ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
                     >
                       {isAlreadyRequested ? 'Requested' : 'Request'}
                     </button>
@@ -228,7 +236,7 @@ export default function Home() {
       {activeTab === 'admin' && (
         <section className="space-y-4">
           {!isAdmin ? (
-            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '0525') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
+            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '1234') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
               <p className="text-sm text-slate-300">Enter Admin PIN to manage requests (Default is 1234):</p>
               <input
                 type="password"
@@ -245,14 +253,20 @@ export default function Home() {
             <div className="space-y-3">
               <h2 className="font-bold text-sm text-slate-300">Pending Requests to Add:</h2>
               {requests.filter(r => r.status === 'pending').map((r) => (
-                <div key={r.id} className="flex justify-between items-center bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                  <div>
-                    <p className="font-semibold text-sm">{r.title}</p>
-                    <p className="text-xs text-slate-400">Requested by: {r.requested_by}</p>
+                <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl items-center">
+                  {r.poster_path ? (
+                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
+                  ) : (
+                    <div className="w-12 h-16 bg-slate-800 rounded" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{r.title} {r.year && <span className="text-slate-400 font-normal">({r.year})</span>}</p>
+                    <p className="text-xs text-amber-400 font-medium">Requested by: {r.requested_by}</p>
+                    <p className="text-[11px] text-slate-400 uppercase">{r.media_type}</p>
                   </div>
                   <button
                     onClick={() => markDone(r.id)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg shrink-0"
                   >
                     Mark Done
                   </button>
