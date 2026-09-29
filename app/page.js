@@ -9,7 +9,7 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // CHANGE YOUR ADMIN PIN HERE:
-const ADMIN_PIN = '1234'; 
+const ADMIN_PIN = '0525'; 
 
 export default function Home() {
   const [userName, setUserName] = useState('');
