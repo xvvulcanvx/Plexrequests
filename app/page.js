@@ -102,6 +102,9 @@ export default function Home() {
     if (!error) fetchRequests();
   };
 
+  // Only show user-submitted requests in the tab (filter out bulk library imports)
+  const visibleRequests = requests.filter(r => r.requested_by !== 'Plex Library');
+
   if (!userName) {
     return (
       <main className="min-h-screen flex items-center justify-center p-4">
@@ -126,7 +129,7 @@ export default function Home() {
 
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-24 p-4">
-      {/* Top Header - Clicking logo resets home */}
+      {/* Top Header */}
       <header className="flex justify-between items-center py-4 mb-2">
         <button 
           onClick={handleResetHome} 
@@ -151,7 +154,7 @@ export default function Home() {
           onClick={() => setActiveTab('list')}
           className={`flex-1 py-2 rounded-lg font-medium transition ${activeTab === 'list' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
         >
-          Requests ({requests.length})
+          Requests ({visibleRequests.length})
         </button>
         <button
           onClick={() => setActiveTab('admin')}
@@ -187,7 +190,7 @@ export default function Home() {
 
               const matchingRequest = requests.find(r => 
                 (r.tmdb_id && r.tmdb_id === tmdbId) || 
-                (r.title.toLowerCase() === title.toLowerCase() && r.year === year)
+                (r.title.toLowerCase() === title.toLowerCase() && (!r.year || r.year === year))
               );
 
               const isAlreadyAdded = matchingRequest && matchingRequest.status === 'done';
@@ -235,15 +238,17 @@ export default function Home() {
       {/* Requests List Tab */}
       {activeTab === 'list' && (
         <section className="space-y-3">
-          {requests.length === 0 ? (
-            <p className="text-center text-slate-500 py-10">No requests submitted yet.</p>
+          {visibleRequests.length === 0 ? (
+            <p className="text-center text-slate-500 py-10 text-sm">No new requests submitted yet.</p>
           ) : (
-            requests.map((r) => (
+            visibleRequests.map((r) => (
               <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-2.5 rounded-xl items-center">
                 {r.poster_path ? (
                   <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
                 ) : (
-                  <div className="w-12 h-16 bg-slate-800 rounded" />
+                  <div className="w-12 h-16 bg-slate-800 rounded flex items-center justify-center text-slate-500 text-xs font-bold">
+                    {r.media_type === 'tv' ? 'TV' : 'FILM'}
+                  </div>
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-sm truncate">{r.title} {r.year && <span className="text-slate-400 font-normal">({r.year})</span>}</p>
@@ -299,7 +304,9 @@ export default function Home() {
                   {r.poster_path ? (
                     <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
                   ) : (
-                    <div className="w-12 h-16 bg-slate-800 rounded" />
+                    <div className="w-12 h-16 bg-slate-800 rounded flex items-center justify-center text-slate-500 text-xs font-bold">
+                      {r.media_type === 'tv' ? 'TV' : 'FILM'}
+                    </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{r.title} {r.year && <span className="text-slate-400 font-normal">({r.year})</span>}</p>
