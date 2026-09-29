@@ -9,14 +9,13 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // CHANGE YOUR ADMIN PIN HERE:
-const ADMIN_PIN = '0525'; 
+const ADMIN_PIN = '1234'; 
 
-// Cleans punctuation, extra spaces, and casing to ensure reliable matches
 function cleanString(str) {
   if (!str) return '';
   return String(str)
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '') // Strips all symbols, spaces, quotes, and punctuation
+    .replace(/[^a-z0-9]/g, '')
     .trim();
 }
 
@@ -31,7 +30,8 @@ export default function Home() {
   const [tempName, setTempName] = useState('');
   const [search, setSearch] = useState('');
   const [results, setResults] = useState([]);
-  const [requests, setRequests] = useState([]);
+  const [userRequests, setUserRequests] = useState([]);
+  const [matchedDbItems, setMatchedDbItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('search');
   const [adminPass, setAdminPass] = useState('');
@@ -40,27 +40,69 @@ export default function Home() {
   useEffect(() => {
     const saved = localStorage.getItem('plex_requester_name');
     if (saved) setUserName(saved);
-    fetchRequests();
+    fetchUserRequests();
   }, []);
 
-  // Predictive search
+  const fetchUserRequests = async () => {
+    const { data } = await supabase
+      .from('requests')
+      .select('*')
+      .neq('requested_by', 'Plex Library')
+      .order('created_at', { ascending: false });
+
+    if (data) setUserRequests(data);
+  };
+
+  // Predictive search: pulls Pages 1, 2, and 3 (~40-60 titles)
   useEffect(() => {
     if (!search.trim()) {
       setResults([]);
+      setMatchedDbItems([]);
       return;
     }
 
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}`
-        );
-        const data = await res.json();
-        const filtered = (data.results || []).filter(
-          item => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path
-        );
+        const query = encodeURIComponent(search);
+        
+        // Fetch 3 pages in parallel to give up to ~60 comprehensive results
+        const [res1, res2, res3] = await Promise.all([
+          fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${query}&page=1`).then(r => r.json()),
+          fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${query}&page=2`).then(r => r.json()),
+          fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${query}&page=3`).then(r => r.json()),
+        ]);
+
+        const rawList = [
+          ...(res1.results || []),
+          ...(res2.results || []),
+          ...(res3.results || [])
+        ];
+
+        // Deduplicate and filter out items without posters
+        const seenIds = new Set();
+        const filtered = rawList.filter(item => {
+          if (!item.poster_path) return false;
+          if (item.media_type !== 'movie' && item.media_type !== 'tv') return false;
+          if (seenIds.has(item.id)) return false;
+          seenIds.add(item.id);
+          return true;
+        });
+
         setResults(filtered);
+
+        // Targeted check against Supabase for all retrieved items
+        if (filtered.length > 0) {
+          const titlesToSearch = filtered.map(item => (item.title || item.name).trim());
+          const { data: dbMatches } = await supabase
+            .from('requests')
+            .select('*')
+            .in('title', titlesToSearch);
+
+          if (dbMatches) {
+            setMatchedDbItems(dbMatches);
+          }
+        }
       } catch (err) {
         console.error('Search error:', err);
       }
@@ -77,20 +119,10 @@ export default function Home() {
     setUserName(tempName.trim());
   };
 
-  const fetchRequests = async () => {
-    // Increase limit to 10,000 to bypass Supabase's default 1,000-row cap
-    const { data } = await supabase
-      .from('requests')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(10000);
-
-    if (data) setRequests(data);
-  };
-
   const handleResetHome = () => {
     setSearch('');
     setResults([]);
+    setMatchedDbItems([]);
     setActiveTab('search');
   };
 
@@ -115,15 +147,16 @@ export default function Home() {
     }
 
     alert(`Requested "${title}" (${year})!`);
-    await fetchRequests();
+    await fetchUserRequests();
+    
+    // Add locally to instant matches
+    setMatchedDbItems(prev => [...prev, { title, year, status: 'pending', tmdb_id: tmdbId }]);
   };
 
   const markDone = async (id) => {
     const { error } = await supabase.from('requests').update({ status: 'done' }).eq('id', id);
-    if (!error) fetchRequests();
+    if (!error) fetchUserRequests();
   };
-
-  const visibleRequests = requests.filter(r => r.requested_by !== 'Plex Library');
 
   if (!userName) {
     return (
@@ -174,7 +207,7 @@ export default function Home() {
           onClick={() => setActiveTab('list')}
           className={`flex-1 py-2 rounded-lg font-medium transition ${activeTab === 'list' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'}`}
         >
-          Requests ({visibleRequests.length})
+          Requests ({userRequests.length})
         </button>
         <button
           onClick={() => setActiveTab('admin')}
@@ -207,18 +240,15 @@ export default function Home() {
               const title = item.title || item.name;
               const year = cleanYear(item.release_date || item.first_air_date || '');
               const tmdbId = String(item.id);
-
               const cleanItemTitle = cleanString(title);
 
-              // Smart match: Checks clean TMDB ID, or normalized Title + Year
-              const matchingRequest = requests.find(r => {
+              const matchingRequest = matchedDbItems.find(r => {
                 if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
 
                 const cleanDbTitle = cleanString(r.title);
                 const cleanDbYear = cleanYear(r.year);
 
                 if (cleanDbTitle === cleanItemTitle) {
-                  // If year exists on both, verify match; otherwise title match is sufficient
                   if (cleanDbYear && year) {
                     return cleanDbYear === year;
                   }
@@ -227,9 +257,9 @@ export default function Home() {
                 return false;
               });
 
-const requestStatus = matchingRequest?.status?.toLowerCase().trim();
-const isAlreadyAdded = requestStatus === 'done';
-const isPending = requestStatus === 'pending';
+              const requestStatus = matchingRequest?.status?.toLowerCase().trim();
+              const isAlreadyAdded = requestStatus === 'done';
+              const isPending = requestStatus === 'pending';
 
               return (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col justify-between">
@@ -273,10 +303,10 @@ const isPending = requestStatus === 'pending';
       {/* Requests List Tab */}
       {activeTab === 'list' && (
         <section className="space-y-3">
-          {visibleRequests.length === 0 ? (
+          {userRequests.length === 0 ? (
             <p className="text-center text-slate-500 py-10 text-sm">No new requests submitted yet.</p>
           ) : (
-            visibleRequests.map((r) => (
+            userRequests.map((r) => (
               <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-2.5 rounded-xl items-center">
                 {r.poster_path ? (
                   <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
@@ -334,7 +364,7 @@ const isPending = requestStatus === 'pending';
                   Lock Admin
                 </button>
               </div>
-              {requests.filter(r => r.status === 'pending').map((r) => (
+              {userRequests.filter(r => r.status === 'pending').map((r) => (
                 <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl items-center">
                   {r.poster_path ? (
                     <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded object-cover" />
@@ -356,7 +386,7 @@ const isPending = requestStatus === 'pending';
                   </button>
                 </div>
               ))}
-              {requests.filter(r => r.status === 'pending').length === 0 && (
+              {userRequests.filter(r => r.status === 'pending').length === 0 && (
                 <p className="text-slate-500 text-center py-6 text-sm">All requests are completed!</p>
               )}
             </div>
