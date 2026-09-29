@@ -2,11 +2,11 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function Home() {
   const [userName, setUserName] = useState('');
@@ -15,7 +15,7 @@ export default function Home() {
   const [results, setResults] = useState([]);
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('search'); // 'search', 'list', 'admin'
+  const [activeTab, setActiveTab] = useState('search');
   const [adminPass, setAdminPass] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -33,8 +33,12 @@ export default function Home() {
   };
 
   const fetchRequests = async () => {
-    const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
-    if (data) setRequests(data);
+    const { data, error } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.error('Fetch error:', error);
+    } else if (data) {
+      setRequests(data);
+    }
   };
 
   const handleSearch = async (e) => {
@@ -46,7 +50,7 @@ export default function Home() {
       const data = await res.json();
       setResults((data.results || []).filter(item => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path));
     } catch (err) {
-      console.error(err);
+      console.error('Search error:', err);
     }
     setLoading(false);
   };
@@ -55,7 +59,13 @@ export default function Home() {
     const title = item.title || item.name;
     const year = (item.release_date || item.first_air_date || '').split('-')[0];
     
-    await supabase.from('requests').insert([{
+    // Check if keys are actually present
+    if (!supabaseUrl || !supabaseKey) {
+      alert('Error: Supabase URL or Key is missing from your Vercel Environment Variables.');
+      return;
+    }
+
+    const { error } = await supabase.from('requests').insert([{
       title,
       media_type: item.media_type,
       year,
@@ -64,13 +74,23 @@ export default function Home() {
       status: 'pending'
     }]);
 
-    alert(`Requested "${title}"!`);
-    fetchRequests();
+    if (error) {
+      alert(`Database Error: ${error.message}`);
+      console.error('Insert error:', error);
+      return;
+    }
+
+    alert(`Requested "${title}" successfully!`);
+    await fetchRequests();
   };
 
   const markDone = async (id) => {
-    await supabase.from('requests').update({ status: 'done' }).eq('id', id);
-    fetchRequests();
+    const { error } = await supabase.from('requests').update({ status: 'done' }).eq('id', id);
+    if (error) {
+      alert(`Update Error: ${error.message}`);
+    } else {
+      fetchRequests();
+    }
   };
 
   if (!userName) {
