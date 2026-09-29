@@ -9,7 +9,7 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Admin PIN
-const ADMIN_PIN = '0525';
+const ADMIN_PIN = '1234';
 
 function cleanString(str) {
   if (!str) return '';
@@ -17,7 +17,7 @@ function cleanString(str) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/&/g, 'and') // Normalizes '&' to 'and'
+    .replace(/&/g, 'and')
     .replace(/[^a-z0-9]/g, '')
     .trim();
 }
@@ -26,6 +26,28 @@ function cleanYear(yr) {
   if (!yr) return '';
   const match = String(yr).match(/\d{4}/);
   return match ? match[0] : '';
+}
+
+// Determines if a movie is likely still theatrical / not out on physical or digital yet
+function getTheatricalStatus(releaseDateStr, mediaType) {
+  if (!releaseDateStr || mediaType === 'tv') return null;
+  const release = new Date(releaseDateStr);
+  const now = new Date();
+  
+  if (isNaN(release.getTime())) return null;
+
+  // If release date is in the future
+  if (release > now) {
+    return 'Upcoming / Not Released';
+  }
+
+  // Movies typically take ~60 to 90 days from theater release to hit home digital / Blu-ray
+  const diffDays = Math.floor((now - release) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 75) {
+    return 'In Theaters / Pre-Digital';
+  }
+
+  return null;
 }
 
 const GENRE_CHIPS = [
@@ -203,7 +225,7 @@ export default function Home() {
     if (dbMatches) setMatchedDbItems(dbMatches);
   };
 
-  // Open Details Modal
+  // Open Details Modal & attach matched row directly
   const handleOpenDetails = async (item) => {
     const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     let trailerKey = null;
@@ -226,7 +248,7 @@ export default function Home() {
     const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
 
-    // Guard: Prevent requesting if already exists or already requested
+    // Guard: Prevent requesting if already exists
     const existing = findDbMatch(item);
     if (existing) {
       if (existing.status === 'done') {
@@ -264,7 +286,7 @@ export default function Home() {
           body: JSON.stringify({
             embeds: [{
               title: `🎬 New Plex Request: ${title} (${year})`,
-              description: `**Requested by:** ${userName}\n**Type:** ${mediaType.toUpperCase()}\n**Overview:** ${item.overview ? item.overview.slice(0, 180) + '...' : 'N/A'}`,
+              description: `**Requested by:** ${userName}\n**Email:** ${userEmail || 'None provided'}\n**Type:** ${mediaType.toUpperCase()}\n**Overview:** ${item.overview ? item.overview.slice(0, 180) + '...' : 'N/A'}`,
               thumbnail: { url: `https://image.tmdb.org/t/p/w200${item.poster_path}` },
               color: 16098851
             }]
@@ -292,13 +314,18 @@ export default function Home() {
     }
   };
 
-  // Admin Actions (Note is now strictly optional)
+  // Admin Actions (Now removes immediately from the pending queue)
   const updateStatus = async (id, status, note = '') => {
     const { error } = await supabase.from('requests').update({ 
       status, 
       admin_note: note 
     }).eq('id', id);
-    if (!error) fetchUserRequests();
+    
+    if (!error) {
+      // Re-fetch so the item updates everywhere
+      await fetchUserRequests();
+      setMatchedDbItems(prev => prev.map(item => item.id === id ? { ...item, status, admin_note: note } : item));
+    }
   };
 
   const handleDeclinePrompt = (id) => {
@@ -333,7 +360,6 @@ export default function Home() {
     setShowSettings(false);
   };
 
-  // Privacy Rule: Users only see their own requests; Admin sees all
   const visibleRequests = userRequests.filter(r => {
     if (isAdmin) return true;
     return r.requested_by?.toLowerCase().trim() === userName?.toLowerCase().trim();
@@ -361,7 +387,7 @@ export default function Home() {
               onChange={(e) => setTempEmail(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500 text-sm"
             />
-            <p className="text-[11px] text-slate-500 mt-1 px-1">Optional: We'll email you when your request is added to Plex.</p>
+            <p className="text-[11px] text-slate-500 mt-1 px-1">Optional: Provide email to receive updates on your requests.</p>
           </div>
           <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 transition">
             Start Requesting
@@ -466,6 +492,8 @@ export default function Home() {
             {results.map((item) => {
               const title = item.title || item.name;
               const year = cleanYear(item.release_date || item.first_air_date || '');
+              const theatricalBadge = getTheatricalStatus(item.release_date, item.media_type);
+              
               const matchingRequest = findDbMatch(item);
               const status = matchingRequest?.status?.toLowerCase().trim();
               const isUserOwner = matchingRequest?.requested_by?.toLowerCase() === userName.toLowerCase();
@@ -485,6 +513,14 @@ export default function Home() {
                       className="w-full h-full object-cover group-hover:scale-105 transition duration-300" 
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent opacity-80" />
+                    
+                    {/* Theatrical / Availability Tag */}
+                    {theatricalBadge && (
+                      <span className="absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
+                        {theatricalBadge}
+                      </span>
+                    )}
+
                     <span className="absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-amber-400">
                       ★ {item.vote_average ? item.vote_average.toFixed(1) : 'N/A'}
                     </span>
@@ -663,20 +699,21 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Request Queue */}
+              {/* Active Pending Queue Only */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-xs text-slate-300">Active Requests Queue:</h3>
                   <button onClick={() => setIsAdmin(false)} className="text-xs text-slate-400 underline">Lock Admin</button>
                 </div>
 
-                {userRequests.filter(r => r.status !== 'done').map((r) => (
+                {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').map((r) => (
                   <div key={r.id} className="bg-slate-900/80 border border-slate-800 p-3 rounded-xl flex gap-3 items-center">
                     <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-11 h-16 rounded object-cover" />
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-xs truncate text-white">{r.title} ({r.year})</p>
                       <p className="text-[11px] text-amber-400">Requested by: {r.requested_by}</p>
                       {r.user_email && <p className="text-[10px] text-slate-500">{r.user_email}</p>}
+                      {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
                     </div>
 
                     <div className="flex flex-col gap-1 shrink-0">
@@ -686,12 +723,14 @@ export default function Home() {
                       >
                         ✓ Done
                       </button>
-                      <button
-                        onClick={() => updateStatus(r.id, 'in_progress')}
-                        className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
-                      >
-                        ⚡ In Progress
-                      </button>
+                      {r.status !== 'in_progress' && (
+                        <button
+                          onClick={() => updateStatus(r.id, 'in_progress')}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                        >
+                          ⚡ In Progress
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDeclinePrompt(r.id)}
                         className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
@@ -701,6 +740,10 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
+
+                {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').length === 0 && (
+                  <p className="text-slate-500 text-center py-6 text-xs">All requests have been handled!</p>
+                )}
               </div>
             </div>
           )}
@@ -712,6 +755,7 @@ export default function Home() {
         const modalMatch = findDbMatch(selectedMedia);
         const modalStatus = modalMatch?.status?.toLowerCase().trim();
         const isUserOwner = modalMatch?.requested_by?.toLowerCase() === userName.toLowerCase();
+        const theatricalStatus = getTheatricalStatus(selectedMedia.release_date, selectedMedia.media_type);
 
         return (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -719,9 +763,16 @@ export default function Home() {
               <div className="flex justify-between items-start">
                 <div>
                   <h3 className="text-lg font-bold text-white">{selectedMedia.title || selectedMedia.name}</h3>
-                  <p className="text-xs text-slate-400">
-                    {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()} • ★ {selectedMedia.vote_average?.toFixed(1)}
-                  </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs text-slate-400">
+                      {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()} • ★ {selectedMedia.vote_average?.toFixed(1)}
+                    </p>
+                    {theatricalStatus && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700">
+                        {theatricalStatus}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button 
                   onClick={() => setSelectedMedia(null)} 
@@ -773,6 +824,13 @@ export default function Home() {
                     Already Requested
                   </button>
                 )
+              ) : modalStatus === 'declined' ? (
+                <button
+                  disabled
+                  className="w-full bg-rose-950/60 text-rose-400 border border-rose-800 font-bold py-3 rounded-xl text-xs cursor-not-allowed"
+                >
+                  ✕ Marked Unavailable by Admin
+                </button>
               ) : (
                 <button
                   onClick={() => handleRequest(selectedMedia)}
