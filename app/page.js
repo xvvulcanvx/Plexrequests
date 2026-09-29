@@ -228,7 +228,7 @@ export default function Home() {
       {activeTab === 'admin' && (
         <section className="space-y-4">
           {!isAdmin ? (
-            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '1234') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
+            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '0525') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
               <p className="text-sm text-slate-300">Enter Admin PIN to manage requests (Default is 1234):</p>
               <input
                 type="password"
