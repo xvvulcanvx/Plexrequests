@@ -315,14 +315,35 @@ export default function Home() {
   };
 
   // Admin Actions (Now removes immediately from the pending queue)
+  // Admin Actions with automated email notifications
   const updateStatus = async (id, status, note = '') => {
+    // 1. Update status in Supabase
     const { error } = await supabase.from('requests').update({ 
       status, 
       admin_note: note 
     }).eq('id', id);
     
     if (!error) {
-      // Re-fetch so the item updates everywhere
+      // Find the item to see if the user provided an email
+      const targetRequest = userRequests.find(r => r.id === id);
+      if (targetRequest && targetRequest.user_email) {
+        try {
+          await fetch('/api/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              toEmail: targetRequest.user_email,
+              title: targetRequest.title,
+              status,
+              note
+            })
+          });
+        } catch (err) {
+          console.error('Failed to trigger email notification:', err);
+        }
+      }
+
+      // Re-fetch so the item updates on screen immediately
       await fetchUserRequests();
       setMatchedDbItems(prev => prev.map(item => item.id === id ? { ...item, status, admin_note: note } : item));
     }
