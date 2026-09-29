@@ -227,8 +227,9 @@ export default function Home() {
                 return false;
               });
 
-              const isAlreadyAdded = matchingRequest && matchingRequest.status === 'done';
-              const isPending = matchingRequest && matchingRequest.status === 'pending';
+const requestStatus = matchingRequest?.status?.toLowerCase().trim();
+const isAlreadyAdded = requestStatus === 'done';
+const isPending = requestStatus === 'pending';
 
               return (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col justify-between">
