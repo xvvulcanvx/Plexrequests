@@ -11,6 +11,21 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // CHANGE YOUR ADMIN PIN HERE:
 const ADMIN_PIN = '0525'; 
 
+// Cleans punctuation, extra spaces, and casing to ensure reliable matches
+function cleanString(str) {
+  if (!str) return '';
+  return String(str)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '') // Strips all symbols, spaces, quotes, and punctuation
+    .trim();
+}
+
+function cleanYear(yr) {
+  if (!yr) return '';
+  const match = String(yr).match(/\d{4}/);
+  return match ? match[0] : '';
+}
+
 export default function Home() {
   const [userName, setUserName] = useState('');
   const [tempName, setTempName] = useState('');
@@ -63,7 +78,13 @@ export default function Home() {
   };
 
   const fetchRequests = async () => {
-    const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
+    // Increase limit to 10,000 to bypass Supabase's default 1,000-row cap
+    const { data } = await supabase
+      .from('requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10000);
+
     if (data) setRequests(data);
   };
 
@@ -75,7 +96,7 @@ export default function Home() {
 
   const handleRequest = async (item) => {
     const title = item.title || item.name;
-    const year = (item.release_date || item.first_air_date || '').split('-')[0];
+    const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
 
     const { error } = await supabase.from('requests').insert([{
@@ -102,7 +123,6 @@ export default function Home() {
     if (!error) fetchRequests();
   };
 
-  // Only show user-submitted requests in the tab (filter out bulk library imports)
   const visibleRequests = requests.filter(r => r.requested_by !== 'Plex Library');
 
   if (!userName) {
@@ -185,13 +205,27 @@ export default function Home() {
           <div className="grid grid-cols-2 gap-4">
             {results.map((item) => {
               const title = item.title || item.name;
-              const year = (item.release_date || item.first_air_date || '').split('-')[0];
+              const year = cleanYear(item.release_date || item.first_air_date || '');
               const tmdbId = String(item.id);
 
-              const matchingRequest = requests.find(r => 
-                (r.tmdb_id && r.tmdb_id === tmdbId) || 
-                (r.title.toLowerCase() === title.toLowerCase() && (!r.year || r.year === year))
-              );
+              const cleanItemTitle = cleanString(title);
+
+              // Smart match: Checks clean TMDB ID, or normalized Title + Year
+              const matchingRequest = requests.find(r => {
+                if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
+
+                const cleanDbTitle = cleanString(r.title);
+                const cleanDbYear = cleanYear(r.year);
+
+                if (cleanDbTitle === cleanItemTitle) {
+                  // If year exists on both, verify match; otherwise title match is sufficient
+                  if (cleanDbYear && year) {
+                    return cleanDbYear === year;
+                  }
+                  return true;
+                }
+                return false;
+              });
 
               const isAlreadyAdded = matchingRequest && matchingRequest.status === 'done';
               const isPending = matchingRequest && matchingRequest.status === 'pending';
