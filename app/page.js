@@ -14,11 +14,12 @@ const ADMIN_PIN = '1234';
 function cleanString(str) {
   if (!str) return '';
   return String(str)
+    .normalize('NFD') // Splits accented characters like é into e + accent
+    .replace(/[\u0300-\u036f]/g, '') // Strips the accent marks
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
+    .replace(/[^a-z0-9]/g, '') // Strips all symbols, spaces, quotes
     .trim();
 }
-
 function cleanYear(yr) {
   if (!yr) return '';
   const match = String(yr).match(/\d{4}/);
@@ -92,12 +93,14 @@ export default function Home() {
         setResults(filtered);
 
         // Targeted check against Supabase for all retrieved items
-        if (filtered.length > 0) {
+       if (filtered.length > 0) {
           const titlesToSearch = filtered.map(item => (item.title || item.name).trim());
+          
+          // Query Supabase for exact title matches OR titles matching the search word
           const { data: dbMatches } = await supabase
             .from('requests')
             .select('*')
-            .in('title', titlesToSearch);
+            .or(`title.in.(${titlesToSearch.map(t => `"${t.replace(/"/g, '')}"`).join(',')}),title.ilike.%${search.trim()}%`);
 
           if (dbMatches) {
             setMatchedDbItems(dbMatches);
@@ -242,13 +245,18 @@ export default function Home() {
               const tmdbId = String(item.id);
               const cleanItemTitle = cleanString(title);
 
-              const matchingRequest = matchedDbItems.find(r => {
+             const matchingRequest = matchedDbItems.find(r => {
                 if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
 
                 const cleanDbTitle = cleanString(r.title);
                 const cleanDbYear = cleanYear(r.year);
 
-                if (cleanDbTitle === cleanItemTitle) {
+                // Check exact clean match OR check if one title contains the other (e.g. "Detective Pikachu" inside "Pokemon Detective Pikachu")
+                const titlesMatch = cleanDbTitle === cleanItemTitle || 
+                                    (cleanDbTitle.length > 5 && cleanItemTitle.includes(cleanDbTitle)) ||
+                                    (cleanItemTitle.length > 5 && cleanDbTitle.includes(cleanItemTitle));
+
+                if (titlesMatch) {
                   if (cleanDbYear && year) {
                     return cleanDbYear === year;
                   }
