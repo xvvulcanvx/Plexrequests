@@ -8,6 +8,9 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// CHANGE YOUR ADMIN PIN HERE:
+const ADMIN_PIN = '1234'; 
+
 export default function Home() {
   const [userName, setUserName] = useState('');
   const [tempName, setTempName] = useState('');
@@ -25,7 +28,7 @@ export default function Home() {
     fetchRequests();
   }, []);
 
-  // Live predictive search as the user types
+  // Predictive search
   useEffect(() => {
     if (!search.trim()) {
       setResults([]);
@@ -47,7 +50,7 @@ export default function Home() {
         console.error('Search error:', err);
       }
       setLoading(false);
-    }, 350); // Waits 350ms after user pauses typing
+    }, 350);
 
     return () => clearTimeout(timer);
   }, [search]);
@@ -62,6 +65,12 @@ export default function Home() {
   const fetchRequests = async () => {
     const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false });
     if (data) setRequests(data);
+  };
+
+  const handleResetHome = () => {
+    setSearch('');
+    setResults([]);
+    setActiveTab('search');
   };
 
   const handleRequest = async (item) => {
@@ -96,7 +105,7 @@ export default function Home() {
   if (!userName) {
     return (
       <main className="min-h-screen flex items-center justify-center p-4">
-        <form onSubmit={saveName} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center">
+        <form onSubmit={saveName} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full space-y-4 text-center shadow-xl">
           <h1 className="text-2xl font-bold">What is your name?</h1>
           <p className="text-slate-400 text-sm">Enter your name so we know who requested the media.</p>
           <input
@@ -107,7 +116,7 @@ export default function Home() {
             onChange={(e) => setTempName(e.target.value)}
             className="w-full bg-slate-950 border border-slate-700 px-4 py-3 rounded-xl text-white outline-none focus:border-amber-500"
           />
-          <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 font-semibold py-3 rounded-xl text-black">
+          <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 font-semibold py-3 rounded-xl text-black transition">
             Continue
           </button>
         </form>
@@ -117,17 +126,16 @@ export default function Home() {
 
   return (
     <div className="max-w-xl mx-auto min-h-screen pb-24 p-4">
-      {/* Top Header */}
+      {/* Top Header - Clicking logo resets home */}
       <header className="flex justify-between items-center py-4 mb-2">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-amber-400">Plex Requests</h1>
-          <p className="text-xs text-slate-400">Hi, {userName}</p>
-        </div>
-        <button
-          onClick={() => { localStorage.removeItem('plex_requester_name'); setUserName(''); }}
-          className="text-xs text-slate-500 underline"
+        <button 
+          onClick={handleResetHome} 
+          className="text-left group cursor-pointer focus:outline-none"
         >
-          Change Name
+          <h1 className="text-xl font-bold tracking-tight text-amber-400 group-hover:text-amber-300 transition">
+            Plex Requests
+          </h1>
+          <p className="text-xs text-slate-400">Hi, {userName}</p>
         </button>
       </header>
 
@@ -177,11 +185,13 @@ export default function Home() {
               const year = (item.release_date || item.first_air_date || '').split('-')[0];
               const tmdbId = String(item.id);
 
-              // Fixed: Checks matching TMDB ID or title + exact year
-              const isAlreadyRequested = requests.some(r => 
+              const matchingRequest = requests.find(r => 
                 (r.tmdb_id && r.tmdb_id === tmdbId) || 
                 (r.title.toLowerCase() === title.toLowerCase() && r.year === year)
               );
+
+              const isAlreadyAdded = matchingRequest && matchingRequest.status === 'done';
+              const isPending = matchingRequest && matchingRequest.status === 'pending';
 
               return (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col justify-between">
@@ -191,13 +201,29 @@ export default function Home() {
                       <p className="font-semibold text-sm line-clamp-1">{title}</p>
                       <p className="text-xs text-slate-400">{year || 'N/A'} • {item.media_type.toUpperCase()}</p>
                     </div>
-                    <button
-                      onClick={() => handleRequest(item)}
-                      disabled={isAlreadyRequested}
-                      className={`mt-3 w-full py-2 text-xs font-bold rounded-lg ${isAlreadyRequested ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
-                    >
-                      {isAlreadyRequested ? 'Requested' : 'Request'}
-                    </button>
+
+                    {isAlreadyAdded ? (
+                      <button
+                        disabled
+                        className="mt-3 w-full py-2 text-xs font-bold rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800 cursor-default"
+                      >
+                        ✓ On Plex
+                      </button>
+                    ) : isPending ? (
+                      <button
+                        disabled
+                        className="mt-3 w-full py-2 text-xs font-bold rounded-lg bg-slate-800 text-slate-500 cursor-not-allowed"
+                      >
+                        Requested
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleRequest(item)}
+                        className="mt-3 w-full py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition"
+                      >
+                        Request
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -236,22 +262,38 @@ export default function Home() {
       {activeTab === 'admin' && (
         <section className="space-y-4">
           {!isAdmin ? (
-            <form onSubmit={(e) => { e.preventDefault(); if (adminPass === '1234') setIsAdmin(true); else alert('Incorrect pin'); }} className="space-y-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
-              <p className="text-sm text-slate-300">Enter Admin PIN to manage requests (Default is 1234):</p>
+            <form 
+              onSubmit={(e) => { 
+                e.preventDefault(); 
+                if (adminPass === ADMIN_PIN) setIsAdmin(true); 
+                else alert('Incorrect PIN'); 
+              }} 
+              className="space-y-3 bg-slate-900 border border-slate-800 p-5 rounded-xl shadow-lg"
+            >
+              <h2 className="text-base font-semibold text-white">Admin Access</h2>
+              <p className="text-sm text-slate-300">Welcome Alfredo, please enter your PIN:</p>
               <input
                 type="password"
-                placeholder="PIN"
+                placeholder="Enter PIN"
                 value={adminPass}
                 onChange={(e) => setAdminPass(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 px-3 py-2 rounded-lg text-white"
+                className="w-full bg-slate-950 border border-slate-700 px-3 py-2.5 rounded-lg text-white outline-none focus:border-amber-500"
               />
-              <button type="submit" className="w-full bg-amber-500 text-slate-950 font-bold py-2 rounded-lg text-sm">
+              <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-lg text-sm transition">
                 Unlock Admin
               </button>
             </form>
           ) : (
             <div className="space-y-3">
-              <h2 className="font-bold text-sm text-slate-300">Pending Requests to Add:</h2>
+              <div className="flex justify-between items-center mb-1">
+                <h2 className="font-bold text-sm text-slate-300">Pending Requests to Add:</h2>
+                <button 
+                  onClick={() => setIsAdmin(false)} 
+                  className="text-xs text-slate-400 hover:text-white underline"
+                >
+                  Lock Admin
+                </button>
+              </div>
               {requests.filter(r => r.status === 'pending').map((r) => (
                 <div key={r.id} className="flex gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl items-center">
                   {r.poster_path ? (
@@ -266,7 +308,7 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => markDone(r.id)}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg shrink-0"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg shrink-0 transition"
                   >
                     Mark Done
                   </button>
