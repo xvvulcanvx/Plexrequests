@@ -8,6 +8,9 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Maximum pending requests allowed per standard user
+const MAX_ACTIVE_REQUESTS = 10;
+
 function cleanString(str) {
   if (!str) return '';
   return String(str)
@@ -136,11 +139,16 @@ export default function Home() {
     }
   };
 
+  // Queue Hygiene: Only fetch active items or items resolved in the last 30 days
   const fetchUserRequests = async () => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
     const { data } = await supabase
       .from('requests')
       .select('*')
       .neq('requested_by', 'Plex Library')
+      .or(`status.in.(pending,in_progress),created_at.gte.${thirtyDaysAgo.toISOString()}`)
       .order('created_at', { ascending: false });
 
     if (data) setUserRequests(data);
@@ -237,7 +245,7 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // Auth: Reveal Password Hint
+  // Auth: Fetch Password Hint
   const handleFetchPasswordHint = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -401,12 +409,23 @@ export default function Home() {
     setSelectedMedia({ ...item, trailerKey, media_type: type });
   };
 
+  // Request Submission with Anti-Spam Cap
   const handleRequest = async (item) => {
     if (!currentUser) return;
     const title = item.title || item.name;
     const mediaType = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
+
+    // Anti-Spam Check: Enforce max active pending requests for regular users
+    const userPendingCount = userRequests.filter(
+      r => r.user_email?.toLowerCase() === currentUser.email?.toLowerCase() && r.status === 'pending'
+    ).length;
+
+    if (!currentUser.is_admin && userPendingCount >= MAX_ACTIVE_REQUESTS) {
+      alert(`Request limit reached! You already have ${MAX_ACTIVE_REQUESTS} active pending requests. Please wait for an admin to process them before submitting more.`);
+      return;
+    }
 
     const existing = findDbMatch(item);
     if (existing && existing.status === 'done') {
@@ -483,7 +502,27 @@ export default function Home() {
     }
   };
 
-  // Profile Management (Settings Modal)
+  // Admin Auto-Prune Button
+  const handlePruneOldRequests = async () => {
+    if (!confirm('Permanently delete all Done and Declined requests older than 30 days?')) return;
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const { error } = await supabase
+      .from('requests')
+      .delete()
+      .in('status', ['done', 'declined'])
+      .lte('created_at', thirtyDaysAgo.toISOString());
+
+    if (!error) {
+      alert('Pruned resolved requests older than 30 days!');
+      fetchUserRequests();
+    } else {
+      alert(`Error pruning: ${error.message}`);
+    }
+  };
+
+  // User Settings
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
@@ -514,7 +553,7 @@ export default function Home() {
     }
   };
 
-  // Admin User Directory Controls
+  // Admin Directory Actions
   const handleAdminRenameUser = async (profileId, oldName, userEmail) => {
     const newName = prompt('Enter new display name for user:', oldName);
     if (!newName || newName.trim() === oldName) return;
@@ -590,6 +629,7 @@ export default function Home() {
 
   // Requests filtered strictly to current user's email
   const visibleRequests = userRequests.filter(r => r.user_email?.toLowerCase() === currentUser?.email?.toLowerCase());
+  const activePendingCount = visibleRequests.filter(r => r.status === 'pending').length;
 
   // ==========================================
   // VIEW: AUTHENTICATION / SIGN IN SCREEN
@@ -636,7 +676,6 @@ export default function Home() {
             </p>
           )}
 
-          {/* Form: Sign In & Sign Up */}
           {authMode !== 'forgot' ? (
             <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
               {authMode === 'signup' && (
@@ -693,7 +732,7 @@ export default function Home() {
                   <label className="text-xs font-semibold">Password Hint (Optional)</label>
                   <input
                     type="text"
-                    placeholder="e.g. My first dog's name"
+                    placeholder="e.g. My first pet"
                     value={authHint}
                     onChange={(e) => setAuthHint(e.target.value)}
                     className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
@@ -711,7 +750,6 @@ export default function Home() {
               </button>
             </form>
           ) : (
-            /* Form: Forgot Password Hint */
             <form onSubmit={handleFetchPasswordHint} className="space-y-3">
               <div>
                 <label className="text-xs font-semibold">Enter your account email</label>
@@ -863,6 +901,13 @@ export default function Home() {
               )}
             </div>
 
+            {/* Request Cap Notice for Standard Users */}
+            {!currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 flex items-center justify-between">
+                <span>⚠️ Queue full ({activePendingCount}/{MAX_ACTIVE_REQUESTS} pending). Requesting is paused until items are processed.</span>
+              </div>
+            )}
+
             {!search.trim() && (
               <div className="space-y-2">
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-medium">
@@ -919,6 +964,7 @@ export default function Home() {
                 const status = matchingRequest?.status?.toLowerCase().trim();
                 const isUserOwner = matchingRequest?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
                 const canCancel = isUserOwner || currentUser.is_admin;
+                const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
 
                 return (
                   <div 
@@ -980,9 +1026,14 @@ export default function Home() {
                       ) : (
                         <button
                           onClick={() => handleRequest(item)}
-                          className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black transition"
+                          disabled={isCapped}
+                          className={`w-full py-1.5 text-[11px] font-bold rounded-lg transition ${
+                            isCapped 
+                              ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                          }`}
                         >
-                          Request
+                          {isCapped ? 'Limit Reached' : 'Request'}
                         </button>
                       )}
                     </div>
@@ -1044,7 +1095,13 @@ export default function Home() {
           <section className="space-y-6">
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold text-emerald-500">● Master Admin Active</span>
-              <p className="text-xs opacity-60">Admin: {currentUser.email}</p>
+              <button 
+                onClick={handlePruneOldRequests}
+                className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg border border-slate-700 font-semibold"
+                title="Deletes resolved requests older than 30 days"
+              >
+                🧹 Prune Resolved (&gt;30d)
+              </button>
             </div>
 
             {/* Broadcast Announcement */}
@@ -1170,7 +1227,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Active Requests Queue (with Radarr / Sonarr Badges) */}
+            {/* Active Requests Queue */}
             <div className="space-y-3">
               <h3 className="font-bold text-xs opacity-75">Active Requests Queue:</h3>
 
@@ -1184,7 +1241,6 @@ export default function Home() {
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
                         
-                        {/* Radarr / Sonarr Label */}
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
                           isTv 
                             ? 'bg-purple-950 text-purple-300 border-purple-800' 
@@ -1272,6 +1328,7 @@ export default function Home() {
           const isUserOwner = modalMatch?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
           const canCancel = isUserOwner || currentUser.is_admin;
           const theatricalStatus = getTheatricalStatus(selectedMedia.release_date, selectedMedia.media_type);
+          const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
 
           return (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -1340,9 +1397,14 @@ export default function Home() {
                 ) : (
                   <button
                     onClick={() => handleRequest(selectedMedia)}
-                    className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3 rounded-xl text-xs transition"
+                    disabled={isCapped}
+                    className={`w-full font-bold py-3 rounded-xl text-xs transition ${
+                      isCapped 
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                    }`}
                   >
-                    Confirm Request
+                    {isCapped ? 'Limit Reached (10 Pending)' : 'Confirm Request'}
                   </button>
                 )}
               </div>
