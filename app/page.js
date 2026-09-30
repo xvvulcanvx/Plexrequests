@@ -27,7 +27,6 @@ function cleanYear(yr) {
   return match ? match[0] : '';
 }
 
-// Compact theatrical labels to prevent badge squeezing on mobile
 function getTheatricalStatus(releaseDateStr, mediaType) {
   if (!releaseDateStr || mediaType === 'tv') return null;
   const release = new Date(releaseDateStr);
@@ -38,6 +37,17 @@ function getTheatricalStatus(releaseDateStr, mediaType) {
   const diffDays = Math.floor((now - release) / (1000 * 60 * 60 * 24));
   if (diffDays <= 75) return 'In Theaters';
   return null;
+}
+
+function getDiscoveryEndpoint(genreId, pageNum) {
+  if (genreId === 'movie') {
+    return `https://api.themoviedb.org/3/movie/popular?api_key=${TMDB_KEY}&page=${pageNum}`;
+  } else if (genreId === 'tv') {
+    return `https://api.themoviedb.org/3/tv/popular?api_key=${TMDB_KEY}&page=${pageNum}`;
+  } else if (genreId !== 'trending') {
+    return `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_KEY}&with_genres=${genreId}&sort_by=popularity.desc&page=${pageNum}`;
+  }
+  return `https://api.themoviedb.org/3/trending/all/day?api_key=${TMDB_KEY}&page=${pageNum}`;
 }
 
 const PRIMARY_GENRES = [
@@ -80,12 +90,14 @@ export default function Home() {
   const [tempHint, setTempHint] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
-  // Search & Catalog
+  // Search, Catalog & Pagination
   const [search, setSearch] = useState('');
   const [searchFilter, setSearchFilter] = useState('all');
   const [selectedGenre, setSelectedGenre] = useState('trending');
   const [showExtendedGenres, setShowExtendedGenres] = useState(false);
   const [results, setResults] = useState([]);
+  const [discoveryPage, setDiscoveryPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [userRequests, setUserRequests] = useState([]);
   const [matchedDbItems, setMatchedDbItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -165,12 +177,12 @@ export default function Home() {
     if (data) setProfiles(data);
   };
 
-  // Reset to Home Screen Function
   const handleResetHome = () => {
     setSearch('');
     setSearchFilter('all');
     setSelectedGenre('trending');
     setShowExtendedGenres(false);
+    setDiscoveryPage(1);
     setActiveTab('search');
     setSelectedMedia(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -277,22 +289,15 @@ export default function Home() {
     setShowSettings(false);
   };
 
-  // Discovery
+  // Discovery (Page 1 on Genre or Tab Change)
   useEffect(() => {
     if (search.trim()) return;
+    setDiscoveryPage(1);
 
     async function loadDiscovery() {
       setLoading(true);
       try {
-        let endpoint = `https://api.themoviedb.org/3/trending/all/day?api_key=${TMDB_KEY}`;
-        if (selectedGenre === 'movie') {
-          endpoint = `https://api.themoviedb.org/3/movie/popular?api_key=${TMDB_KEY}`;
-        } else if (selectedGenre === 'tv') {
-          endpoint = `https://api.themoviedb.org/3/tv/popular?api_key=${TMDB_KEY}`;
-        } else if (selectedGenre !== 'trending') {
-          endpoint = `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_KEY}&with_genres=${selectedGenre}&sort_by=popularity.desc`;
-        }
-
+        const endpoint = getDiscoveryEndpoint(selectedGenre, 1);
         const res = await fetch(endpoint);
         const data = await res.json();
         const cleaned = (data.results || []).filter(item => item.poster_path);
@@ -306,6 +311,29 @@ export default function Home() {
 
     loadDiscovery();
   }, [selectedGenre, search]);
+
+  // Load More Discovery Pagination
+  const handleLoadMore = async () => {
+    if (loadingMore || loading) return;
+    setLoadingMore(true);
+    const nextPage = discoveryPage + 1;
+
+    try {
+      const endpoint = getDiscoveryEndpoint(selectedGenre, nextPage);
+      const res = await fetch(endpoint);
+      const data = await res.json();
+      
+      const existingIds = new Set(results.map(r => r.id));
+      const newCleaned = (data.results || []).filter(item => item.poster_path && !existingIds.has(item.id));
+
+      setResults(prev => [...prev, ...newCleaned]);
+      checkDbMatches(newCleaned);
+      setDiscoveryPage(nextPage);
+    } catch (err) {
+      console.error('Load more error:', err);
+    }
+    setLoadingMore(false);
+  };
 
   // Search Multi TMDB
   useEffect(() => {
@@ -362,7 +390,13 @@ export default function Home() {
     }
 
     const { data: dbMatches } = await query;
-    if (dbMatches) setMatchedDbItems(dbMatches);
+    if (dbMatches) {
+      setMatchedDbItems(prev => {
+        const map = new Map();
+        [...prev, ...dbMatches].forEach(item => map.set(item.id, item));
+        return Array.from(map.values());
+      });
+    }
   };
 
   const findDbMatch = (item) => {
@@ -902,7 +936,7 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Brand Header: Clicking this resets the app back to the home page & clears search */}
+        {/* Brand Header */}
         <header className="flex justify-between items-center py-2">
           <div 
             onClick={handleResetHome}
@@ -1136,7 +1170,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Media Grid (With Single-Line Locked Star Badges) */}
+            {/* Media Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
@@ -1173,7 +1207,6 @@ export default function Home() {
 
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent" />
 
-                      {/* Top Badges: Theatrical on left (truncated if long), Stars strictly locked on right */}
                       <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start gap-1 pointer-events-none">
                         {theatricalBadge ? (
                           <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow truncate shrink min-w-0">
@@ -1247,6 +1280,33 @@ export default function Home() {
                 })
               )}
             </div>
+
+            {/* Load More Titles Button */}
+            {!search.trim() && results.length > 0 && (
+              <div className="pt-3 pb-6 flex justify-center">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  className={`px-8 py-3.5 rounded-2xl font-bold text-xs border transition shadow-xl flex items-center gap-2 ${
+                    loadingMore
+                      ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                      : `${isLight ? 'bg-white hover:bg-amber-500 hover:text-slate-950 text-slate-800 border-slate-300' : 'bg-slate-900/90 hover:bg-amber-500 hover:text-slate-950 text-white border-white/10'} shadow-black/40`
+                  }`}
+                >
+                  {loadingMore ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                      Loading Next Batch...
+                    </>
+                  ) : (
+                    <>
+                      <span>⬇️</span>
+                      Load More Titles (Page {discoveryPage + 1})
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </section>
         )}
 
