@@ -61,17 +61,20 @@ const EXTENDED_GENRES = [
 export default function Home() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState(null);
-  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup'
+  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup' | 'forgot'
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
+  const [authHint, setAuthHint] = useState('');
   const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
   // App Settings & Theme
   const [theme, setTheme] = useState('dark');
   const [tempName, setTempName] = useState('');
   const [tempPassword, setTempPassword] = useState('');
+  const [tempHint, setTempHint] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
   // Search & Catalog
@@ -99,7 +102,6 @@ export default function Home() {
   const [declineNoteInput, setDeclineNoteInput] = useState({});
   const [showNoteBox, setShowNoteBox] = useState({});
 
-  // 1. Restore User Session on Load
   useEffect(() => {
     const savedUser = localStorage.getItem('plex_user_session');
     const savedTheme = localStorage.getItem('plex_theme') || 'dark';
@@ -117,7 +119,6 @@ export default function Home() {
     fetchSiteSettings();
   }, []);
 
-  // Fetch admin settings & profiles if admin
   useEffect(() => {
     if (currentUser?.is_admin) {
       fetchProfiles();
@@ -154,6 +155,7 @@ export default function Home() {
   const handleSignIn = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccess('');
     setAuthLoading(true);
 
     const email = authEmail.trim().toLowerCase();
@@ -186,14 +188,16 @@ export default function Home() {
   const handleSignUp = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccess('');
     setAuthLoading(true);
 
     const name = authName.trim();
     const email = authEmail.trim().toLowerCase();
     const pass = authPassword.trim();
+    const hint = authHint.trim();
 
     if (!name || !email || !pass) {
-      setAuthError('All fields are required.');
+      setAuthError('Name, email, and password are required.');
       setAuthLoading(false);
       return;
     }
@@ -212,7 +216,13 @@ export default function Home() {
 
     const { data: newUser, error } = await supabase
       .from('profiles')
-      .insert([{ name, email, password: pass, is_admin: false }])
+      .insert([{ 
+        name, 
+        email, 
+        password: pass, 
+        password_hint: hint || null, 
+        is_admin: false 
+      }])
       .select()
       .single();
 
@@ -227,7 +237,40 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // Auth: Logout (returns anyone to the Welcome screen)
+  // Auth: Reveal Password Hint
+  const handleFetchPasswordHint = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+    setAuthLoading(true);
+
+    const email = authEmail.trim().toLowerCase();
+    if (!email) {
+      setAuthError('Enter your email address first.');
+      setAuthLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('password_hint')
+      .eq('email', email)
+      .single();
+
+    if (error || !data) {
+      setAuthError('No account found for this email.');
+      setAuthLoading(false);
+      return;
+    }
+
+    if (data.password_hint) {
+      setAuthSuccess(`Your password hint: "${data.password_hint}"`);
+    } else {
+      setAuthError('No hint was saved for this account. Contact the admin to reset your password.');
+    }
+    setAuthLoading(false);
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('plex_user_session');
     setCurrentUser(null);
@@ -375,7 +418,6 @@ export default function Home() {
       return;
     }
 
-    // Permanently bind request to user_email and current name
     const { data: newRow, error } = await supabase.from('requests').insert([{
       title,
       media_type: mediaType,
@@ -392,7 +434,6 @@ export default function Home() {
       return;
     }
 
-    // Discord Alert
     if (discordWebhook) {
       try {
         await fetch(discordWebhook, {
@@ -442,16 +483,15 @@ export default function Home() {
     }
   };
 
-  // Profile Management (User changing their name or password)
+  // Profile Management (Settings Modal)
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
 
     const updatedName = tempName.trim();
     const updatePayload = { name: updatedName };
-    if (tempPassword.trim()) {
-      updatePayload.password = tempPassword.trim();
-    }
+    if (tempPassword.trim()) updatePayload.password = tempPassword.trim();
+    if (tempHint.trim()) updatePayload.password_hint = tempHint.trim();
 
     const { error } = await supabase
       .from('profiles')
@@ -459,7 +499,6 @@ export default function Home() {
       .eq('email', currentUser.email);
 
     if (!error) {
-      // Also update requested_by on active requests so the cards reflect the new name
       await supabase
         .from('requests')
         .update({ requested_by: updatedName })
@@ -475,6 +514,7 @@ export default function Home() {
     }
   };
 
+  // Admin User Directory Controls
   const handleAdminRenameUser = async (profileId, oldName, userEmail) => {
     const newName = prompt('Enter new display name for user:', oldName);
     if (!newName || newName.trim() === oldName) return;
@@ -484,6 +524,21 @@ export default function Home() {
     await supabase.from('requests').update({ requested_by: trimmed }).eq('user_email', userEmail);
     fetchProfiles();
     fetchUserRequests();
+  };
+
+  const handleAdminResetPassword = async (profileId, userEmail) => {
+    const newPass = prompt(`Enter new temporary password for ${userEmail}:`);
+    if (!newPass || !newPass.trim()) return;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ password: newPass.trim() })
+      .eq('id', profileId);
+
+    if (!error) {
+      alert(`Password for ${userEmail} reset to: "${newPass.trim()}"`);
+      fetchProfiles();
+    }
   };
 
   const handleAdminDeleteUser = async (profileId, profileEmail) => {
@@ -533,11 +588,11 @@ export default function Home() {
 
   const isLight = theme === 'light';
 
-  // "My Requests" strictly filters to the user's permanent email
+  // Requests filtered strictly to current user's email
   const visibleRequests = userRequests.filter(r => r.user_email?.toLowerCase() === currentUser?.email?.toLowerCase());
 
   // ==========================================
-  // VIEW: WELCOME & AUTHENTICATION SCREEN
+  // VIEW: AUTHENTICATION / SIGN IN SCREEN
   // ==========================================
   if (!currentUser) {
     return (
@@ -545,24 +600,29 @@ export default function Home() {
         <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border p-6 rounded-2xl max-w-sm w-full space-y-5 shadow-2xl`}>
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-black text-amber-500 tracking-tight">Plex Requests</h1>
-            <p className="text-xs opacity-70">Log in or create an account to request media.</p>
+            <p className="text-xs opacity-70">
+              {authMode === 'signin' && 'Sign in to request media'}
+              {authMode === 'signup' && 'Create your server request account'}
+              {authMode === 'forgot' && 'Password Hint Recovery'}
+            </p>
           </div>
 
-          {/* Sign In vs Sign Up Tabs */}
-          <div className="flex bg-slate-950/40 p-1 rounded-xl border border-slate-800 text-xs font-bold">
-            <button
-              onClick={() => { setAuthMode('signin'); setAuthError(''); }}
-              className={`flex-1 py-2 rounded-lg transition ${authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => { setAuthMode('signup'); setAuthError(''); }}
-              className={`flex-1 py-2 rounded-lg transition ${authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
-            >
-              Create Account
-            </button>
-          </div>
+          {authMode !== 'forgot' && (
+            <div className="flex bg-slate-950/40 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+              <button
+                onClick={() => { setAuthMode('signin'); setAuthError(''); setAuthSuccess(''); }}
+                className={`flex-1 py-2 rounded-lg transition ${authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => { setAuthMode('signup'); setAuthError(''); setAuthSuccess(''); }}
+                className={`flex-1 py-2 rounded-lg transition ${authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
+              >
+                Create Account
+              </button>
+            </div>
+          )}
 
           {authError && (
             <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-800 p-2.5 rounded-lg text-center font-medium">
@@ -570,55 +630,119 @@ export default function Home() {
             </p>
           )}
 
-          <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
-            {authMode === 'signup' && (
+          {authSuccess && (
+            <p className="text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800 p-2.5 rounded-lg text-center font-medium">
+              {authSuccess}
+            </p>
+          )}
+
+          {/* Form: Sign In & Sign Up */}
+          {authMode !== 'forgot' ? (
+            <form onSubmit={authMode === 'signin' ? handleSignIn : handleSignUp} className="space-y-3">
+              {authMode === 'signup' && (
+                <div>
+                  <label className="text-xs font-semibold">Display Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter your name"
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
+                  />
+                </div>
+              )}
+
               <div>
-                <label className="text-xs font-semibold">Display Name</label>
+                <label className="text-xs font-semibold">Email Address</label>
                 <input
-                  type="text"
+                  type="email"
                   required
-                  placeholder="Enter your name"
-                  value={authName}
-                  onChange={(e) => setAuthName(e.target.value)}
+                  placeholder="name@example.com"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
                   className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
                 />
               </div>
-            )}
 
-            <div>
-              <label className="text-xs font-semibold">Email Address</label>
-              <input
-                type="email"
-                required
-                placeholder="name@example.com"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
-              />
-            </div>
+              <div>
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-semibold">Password</label>
+                  {authMode === 'signin' && (
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode('forgot'); setAuthError(''); setAuthSuccess(''); }}
+                      className="text-[11px] text-amber-500 hover:underline"
+                    >
+                      Forgot?
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
+                />
+              </div>
 
-            <div>
-              <label className="text-xs font-semibold">Password</label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
-              />
-            </div>
+              {authMode === 'signup' && (
+                <div>
+                  <label className="text-xs font-semibold">Password Hint (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. My first dog's name"
+                    value={authHint}
+                    onChange={(e) => setAuthHint(e.target.value)}
+                    className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
+                  />
+                  <p className="text-[10px] opacity-60 mt-1">Shown if you ever forget your password.</p>
+                </div>
+              )}
 
-            <button
-              type="submit"
-              disabled={authLoading}
-              className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 text-xs transition mt-2 disabled:opacity-50"
-            >
-              {authLoading ? 'Please wait...' : authMode === 'signin' ? 'Sign In' : 'Register Account'}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 text-xs transition mt-2 disabled:opacity-50"
+              >
+                {authLoading ? 'Please wait...' : authMode === 'signin' ? 'Sign In' : 'Register Account'}
+              </button>
+            </form>
+          ) : (
+            /* Form: Forgot Password Hint */
+            <form onSubmit={handleFetchPasswordHint} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold">Enter your account email</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="name@example.com"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
+                />
+              </div>
 
-          {/* Theme preview switch on login screen */}
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 text-xs transition disabled:opacity-50"
+              >
+                {authLoading ? 'Checking...' : 'Show Password Hint'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setAuthMode('signin'); setAuthError(''); setAuthSuccess(''); }}
+                className="w-full text-center text-xs opacity-70 hover:opacity-100 underline pt-1"
+              >
+                ← Back to Sign In
+              </button>
+            </form>
+          )}
+
           <div className="flex justify-between items-center pt-2 border-t border-slate-800/60 text-xs opacity-70">
             <span>Appearance:</span>
             <button
@@ -656,7 +780,7 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Header with User Info and Settings Button */}
+        {/* Header */}
         <header className="flex justify-between items-center py-3 mb-2">
           <div className="text-left">
             <h1 className="text-xl font-black tracking-tight text-amber-500">
@@ -674,7 +798,12 @@ export default function Home() {
 
           <div className="flex items-center gap-2">
             <button 
-              onClick={() => { setTempName(currentUser.name); setTempPassword(''); setShowSettings(true); }}
+              onClick={() => { 
+                setTempName(currentUser.name); 
+                setTempPassword(''); 
+                setTempHint(currentUser.password_hint || '');
+                setShowSettings(true); 
+              }}
               className={`p-2 rounded-xl border ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} opacity-75 hover:opacity-100 transition`}
               title="Account Settings"
               aria-label="Settings"
@@ -690,7 +819,7 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Navigation Tabs (Admin tab ONLY shown to accounts with is_admin === true) */}
+        {/* Navigation Tabs */}
         <nav aria-label="Main Navigation" className={`flex ${isLight ? 'bg-white/80' : 'bg-slate-900/80'} backdrop-blur p-1 rounded-xl mb-5 border ${isLight ? 'border-slate-300' : 'border-slate-800'} text-xs font-semibold`}>
           <button
             onClick={() => setActiveTab('search')}
@@ -716,7 +845,7 @@ export default function Home() {
           )}
         </nav>
 
-        {/* Tab 1: Search & Discovery */}
+        {/* Search & Discovery Tab */}
         {activeTab === 'search' && (
           <section className="space-y-4">
             <div className="relative">
@@ -864,7 +993,7 @@ export default function Home() {
           </section>
         )}
 
-        {/* Tab 2: My Requests (Linked strictly by email) */}
+        {/* My Requests Tab */}
         {activeTab === 'list' && (
           <section className="space-y-3">
             {visibleRequests.length === 0 ? (
@@ -910,7 +1039,7 @@ export default function Home() {
           </section>
         )}
 
-        {/* Tab 3: Admin Dashboard (Only renders if currentUser.is_admin is true) */}
+        {/* Admin Dashboard */}
         {activeTab === 'admin' && currentUser.is_admin && (
           <section className="space-y-6">
             <div className="flex justify-between items-center">
@@ -976,7 +1105,7 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {profiles.map(p => (
                   <div key={p.id} className={`p-2.5 rounded-lg border flex justify-between items-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                     <div 
@@ -985,8 +1114,16 @@ export default function Home() {
                     >
                       <p className="font-bold text-xs truncate hover:text-amber-500">{p.name} {p.is_admin && <span className="text-amber-400 text-[10px] font-normal">(Admin)</span>}</p>
                       <p className="text-[10px] opacity-60 truncate">{p.email}</p>
+                      {p.password_hint && <p className="text-[9px] text-amber-400/80 italic">Hint: {p.password_hint}</p>}
                     </div>
                     <div className="flex gap-2">
+                      <button 
+                        onClick={() => handleAdminResetPassword(p.id, p.email)} 
+                        className="text-[10px] text-amber-400 hover:underline"
+                        title="Reset Password"
+                      >
+                        Reset Pass
+                      </button>
                       <button 
                         onClick={() => handleAdminRenameUser(p.id, p.name, p.email)} 
                         className="text-[10px] opacity-60 hover:opacity-100"
@@ -1033,77 +1170,93 @@ export default function Home() {
               </div>
             )}
 
-            {/* Active Requests Queue */}
+            {/* Active Requests Queue (with Radarr / Sonarr Badges) */}
             <div className="space-y-3">
               <h3 className="font-bold text-xs opacity-75">Active Requests Queue:</h3>
 
-              {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').map((r) => (
-                <div key={r.id} className={`border p-3 rounded-xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
-                  <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-11 h-16 rounded object-cover" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
-                    <p className="text-[11px] text-amber-500 font-semibold">Requested by: {r.requested_by}</p>
-                    {r.user_email && <p className="text-[10px] opacity-60">{r.user_email}</p>}
-                    {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
+              {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').map((r) => {
+                const isTv = (r.media_type || '').toLowerCase() === 'tv';
 
-                    {showNoteBox[r.id] && (
-                      <div className="mt-2 flex gap-1">
-                        <input
-                          type="text"
-                          placeholder="Reason (optional)"
-                          value={declineNoteInput[r.id] || ''}
-                          onChange={(e) => setDeclineNoteInput({ ...declineNoteInput, [r.id]: e.target.value })}
-                          className={`border px-2 py-1 text-[10px] rounded flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
-                        />
-                        <button
-                          onClick={() => {
-                            updateStatus(r.id, 'declined', declineNoteInput[r.id] || '');
-                            setShowNoteBox({ ...showNoteBox, [r.id]: false });
-                          }}
-                          className="bg-rose-800 text-white font-bold text-[10px] px-2 rounded"
-                        >
-                          Confirm
-                        </button>
+                return (
+                  <div key={r.id} className={`border p-3 rounded-xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-11 h-16 rounded object-cover" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
+                        
+                        {/* Radarr / Sonarr Label */}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
+                          isTv 
+                            ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                            : 'bg-sky-950 text-sky-300 border-sky-800'
+                        }`}>
+                          {isTv ? '📺 TV (Sonarr)' : '🎬 Movie (Radarr)'}
+                        </span>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="flex flex-col gap-1 shrink-0">
-                    <button
-                      onClick={() => updateStatus(r.id, 'done')}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
-                    >
-                      ✓ Done
-                    </button>
-                    {r.status !== 'in_progress' && (
+                      <p className="text-[11px] text-amber-500 font-semibold mt-0.5">Requested by: {r.requested_by}</p>
+                      {r.user_email && <p className="text-[10px] opacity-60">{r.user_email}</p>}
+                      {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
+
+                      {showNoteBox[r.id] && (
+                        <div className="mt-2 flex gap-1">
+                          <input
+                            type="text"
+                            placeholder="Reason (optional)"
+                            value={declineNoteInput[r.id] || ''}
+                            onChange={(e) => setDeclineNoteInput({ ...declineNoteInput, [r.id]: e.target.value })}
+                            className={`border px-2 py-1 text-[10px] rounded flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
+                          />
+                          <button
+                            onClick={() => {
+                              updateStatus(r.id, 'declined', declineNoteInput[r.id] || '');
+                              setShowNoteBox({ ...showNoteBox, [r.id]: false });
+                            }}
+                            className="bg-rose-800 text-white font-bold text-[10px] px-2 rounded"
+                          >
+                            Confirm
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1 shrink-0">
                       <button
-                        onClick={() => updateStatus(r.id, 'in_progress')}
-                        className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                        onClick={() => updateStatus(r.id, 'done')}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
                       >
-                        ⚡ In Progress
+                        ✓ Done
                       </button>
-                    )}
-                    <button
-                      onClick={() => updateStatus(r.id, 'declined')}
-                      className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
-                    >
-                      ✕ Decline
-                    </button>
-                    <button
-                      onClick={() => setShowNoteBox({ ...showNoteBox, [r.id]: !showNoteBox[r.id] })}
-                      className="text-[9px] opacity-60 hover:opacity-100"
-                    >
-                      + Note
-                    </button>
-                    <button
-                      onClick={() => handleDismissOrCancel(r.id)}
-                      className="text-[9px] text-rose-400 hover:underline text-right"
-                    >
-                      Delete
-                    </button>
+                      {r.status !== 'in_progress' && (
+                        <button
+                          onClick={() => updateStatus(r.id, 'in_progress')}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                        >
+                          ⚡ In Progress
+                        </button>
+                      )}
+                      <button
+                        onClick={() => updateStatus(r.id, 'declined')}
+                        className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                      >
+                        ✕ Decline
+                      </button>
+                      <button
+                        onClick={() => setShowNoteBox({ ...showNoteBox, [r.id]: !showNoteBox[r.id] })}
+                        className="text-[9px] opacity-60 hover:opacity-100"
+                      >
+                        + Note
+                      </button>
+                      <button
+                        onClick={() => handleDismissOrCancel(r.id)}
+                        className="text-[9px] text-rose-400 hover:underline text-right"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').length === 0 && (
                 <p className="opacity-60 text-center py-6 text-xs">All requests have been handled!</p>
@@ -1231,6 +1384,17 @@ export default function Home() {
                   placeholder="Leave blank to keep same"
                   value={tempPassword}
                   onChange={(e) => setTempPassword(e.target.value)}
+                  className={`w-full border px-3 py-2 rounded-lg text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs opacity-60">Update Password Hint (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. My first pet"
+                  value={tempHint}
+                  onChange={(e) => setTempHint(e.target.value)}
                   className={`w-full border px-3 py-2 rounded-lg text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
                 />
               </div>
