@@ -111,7 +111,8 @@ export default function Home() {
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(false);
 
-  // Admin Settings
+  // Admin Settings & Queue Filter
+  const [adminQueueFilter, setAdminQueueFilter] = useState('all'); // 'all' | 'movie' | 'tv'
   const [requestsPaused, setRequestsPaused] = useState(false);
   const [pinnedHero, setPinnedHero] = useState(null);
   const [discordWebhook, setDiscordWebhook] = useState('');
@@ -289,7 +290,7 @@ export default function Home() {
     setShowSettings(false);
   };
 
-  // Discovery (Page 1 on Genre or Tab Change)
+  // Discovery
   useEffect(() => {
     if (search.trim()) return;
     setDiscoveryPage(1);
@@ -312,7 +313,6 @@ export default function Home() {
     loadDiscovery();
   }, [selectedGenre, search]);
 
-  // Load More Discovery Pagination
   const handleLoadMore = async () => {
     if (loadingMore || loading) return;
     setLoadingMore(true);
@@ -735,9 +735,17 @@ export default function Home() {
   });
   const sortedRequesters = Object.entries(requesterCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
 
-  const adminSortedRequests = [...userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress')].sort(
-    (a, b) => (b.upvoted_by?.length || 1) - (a.upvoted_by?.length || 1)
-  );
+  // Active Requests Filtered & Sorted for Admin Queue
+  const allActiveRequests = userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress');
+  const movieActiveCount = allActiveRequests.filter(r => (r.media_type || '').toLowerCase() !== 'tv').length;
+  const tvActiveCount = allActiveRequests.filter(r => (r.media_type || '').toLowerCase() === 'tv').length;
+
+  const adminFilteredRequests = allActiveRequests.filter(r => {
+    const isTv = (r.media_type || '').toLowerCase() === 'tv';
+    if (adminQueueFilter === 'movie') return !isTv;
+    if (adminQueueFilter === 'tv') return isTv;
+    return true;
+  }).sort((a, b) => (b.upvoted_by?.length || 1) - (a.upvoted_by?.length || 1));
 
   // ==========================================
   // VIEW: AUTHENTICATION / SIGN IN SCREEN
@@ -988,7 +996,6 @@ export default function Home() {
         {/* Tab 1: Search & Discovery */}
         {activeTab === 'search' && (
           <section className="space-y-5">
-            {/* Cinematic Hero Billboard */}
             {heroItem && (
               <div 
                 onClick={() => handleOpenDetails(heroItem)}
@@ -1039,7 +1046,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* "Recently Added to Plex" Shelf */}
+            {/* Recently Added Shelf */}
             {!search.trim() && recentlyAdded.length > 0 && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -1073,7 +1080,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Search Bar with Quick Clear Button */}
+            {/* Search Bar */}
             <div className="space-y-2">
               <div className="relative">
                 <input
@@ -1281,7 +1288,7 @@ export default function Home() {
               )}
             </div>
 
-            {/* Load More Titles Button */}
+            {/* Load More Button */}
             {!search.trim() && results.length > 0 && (
               <div className="pt-3 pb-6 flex justify-center">
                 <button
@@ -1521,109 +1528,207 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Active Requests Queue */}
-            <div className="space-y-3">
-              <h3 className="font-bold text-xs opacity-75">Active Requests Queue (Ranked by Demand):</h3>
+            {/* Active Requests Queue: Filter Tabs & Redesigned Cards */}
+            <div className="space-y-3.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h3 className="font-bold text-xs uppercase tracking-wider text-amber-500">
+                  Active Requests Queue ({allActiveRequests.length})
+                </h3>
 
-              {adminSortedRequests.map((r) => {
-                const isTv = (r.media_type || '').toLowerCase() === 'tv';
-                const upvoteCount = r.upvoted_by?.length || 1;
+                {/* 3 Queue Filter Tabs */}
+                <div className={`flex p-1 rounded-xl border text-xs font-semibold ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'}`}>
+                  <button
+                    onClick={() => setAdminQueueFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      adminQueueFilter === 'all'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    All ({allActiveRequests.length})
+                  </button>
+                  <button
+                    onClick={() => setAdminQueueFilter('movie')}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      adminQueueFilter === 'movie'
+                        ? 'bg-sky-500 text-slate-950 font-bold shadow'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    🎬 Movies ({movieActiveCount})
+                  </button>
+                  <button
+                    onClick={() => setAdminQueueFilter('tv')}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      adminQueueFilter === 'tv'
+                        ? 'bg-purple-500 text-slate-950 font-bold shadow'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    📺 TV Shows ({tvActiveCount})
+                  </button>
+                </div>
+              </div>
 
-                return (
-                  <div key={r.id} className={`border p-3.5 rounded-2xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
-                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded-xl object-cover shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
-                        
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
-                          isTv 
-                            ? 'bg-purple-950 text-purple-300 border-purple-800' 
-                            : 'bg-sky-950 text-sky-300 border-sky-800'
-                        }`}>
-                          {isTv ? '📺 TV (Sonarr)' : '🎬 Movie (Radarr)'}
-                        </span>
+              {/* Redesigned Request Cards */}
+              <div className="space-y-3">
+                {adminFilteredRequests.map((r) => {
+                  const isTv = (r.media_type || '').toLowerCase() === 'tv';
+                  const upvoteCount = r.upvoted_by?.length || 1;
 
-                        {upvoteCount > 1 && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">
-                            🔥 {upvoteCount} Waiting
-                          </span>
+                  return (
+                    <div 
+                      key={r.id} 
+                      className={`border p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition shadow-lg ${
+                        isLight ? 'bg-white border-slate-300' : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {/* Left: Poster + Detailed Info Block */}
+                      <div className="flex gap-3.5 items-start sm:items-center flex-1 min-w-0">
+                        {r.poster_path ? (
+                          <img 
+                            src={`https://image.tmdb.org/t/p/w185${r.poster_path}`} 
+                            alt="" 
+                            className="w-16 h-24 sm:w-20 sm:h-28 rounded-xl object-cover shrink-0 shadow-md border border-white/10" 
+                          />
+                        ) : (
+                          <div className="w-16 h-24 sm:w-20 sm:h-28 bg-slate-800 rounded-xl flex items-center justify-center text-[10px] text-slate-500 shrink-0 border border-white/5">
+                            MEDIA
+                          </div>
                         )}
+
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          {/* Title & Badges */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-sm sm:text-base tracking-tight truncate max-w-full">
+                              {r.title} {r.year && <span className="opacity-60 font-normal">({r.year})</span>}
+                            </h4>
+                            
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border uppercase tracking-wider shrink-0 ${
+                              isTv 
+                                ? 'bg-purple-950 text-purple-300 border-purple-800' 
+                                : 'bg-sky-950 text-sky-300 border-sky-800'
+                            }`}>
+                              {isTv ? '📺 TV (Sonarr)' : '🎬 Movie (Radarr)'}
+                            </span>
+
+                            {upvoteCount > 1 && (
+                              <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 shrink-0 shadow-sm">
+                                🔥 {upvoteCount} Waiting
+                              </span>
+                            )}
+                          </div>
+
+                          {/* TV Episodes / Seasons Spec */}
+                          {isTv && (
+                            <p className="text-[11px] text-purple-300 font-semibold flex items-center gap-1.5">
+                              <span>📦 {r.season_count || 1} Seasons ({r.episode_count || 'N/A'} Ep)</span>
+                              <span className="opacity-60">•</span>
+                              <span>Target: <strong>{r.seasons_requested || 'All'}</strong></span>
+                            </p>
+                          )}
+
+                          {/* Requester Profile Badge */}
+                          <div className="flex items-center gap-2 flex-wrap text-xs">
+                            <span className="inline-flex items-center gap-1.5 bg-slate-950/60 border border-slate-800 px-2.5 py-1 rounded-lg">
+                              <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-slate-950 font-black text-[8px] flex items-center justify-center">
+                                {(r.requested_by || 'U').charAt(0).toUpperCase()}
+                              </span>
+                              <span className="font-semibold text-amber-400">{r.requested_by}</span>
+                              {r.user_email && (
+                                <span className="opacity-50 text-[10px]">({r.user_email})</span>
+                              )}
+                            </span>
+
+                            {r.status === 'in_progress' && (
+                              <span className="text-[11px] text-blue-400 font-bold flex items-center gap-1">
+                                <span className="animate-spin text-xs">⚡</span> Downloading...
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Admin Note Input Box */}
+                          {showNoteBox[r.id] && (
+                            <div className="pt-1.5 flex gap-1.5 max-w-md">
+                              <input
+                                type="text"
+                                placeholder="Add approval or decline note"
+                                value={adminNoteInput[r.id] || ''}
+                                onChange={(e) => setAdminNoteInput({ ...adminNoteInput, [r.id]: e.target.value })}
+                                className={`border px-3 py-1.5 text-xs rounded-xl flex-1 outline-none ${
+                                  isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700 text-white'
+                                }`}
+                              />
+                              <button
+                                onClick={() => {
+                                  updateStatus(r.id, r.status, adminNoteInput[r.id] || '');
+                                  setShowNoteBox({ ...showNoteBox, [r.id]: false });
+                                }}
+                                className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-3 rounded-xl transition"
+                              >
+                                Save Note
+                              </button>
+                            </div>
+                          )}
+
+                          {r.admin_note && !showNoteBox[r.id] && (
+                            <p className="text-[11px] text-amber-300/90 italic bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg inline-block">
+                              Note: {r.admin_note}
+                            </p>
+                          )}
+                        </div>
                       </div>
 
-                      {isTv && (
-                        <p className="text-[10px] text-purple-300 font-semibold mt-0.5">
-                          {r.season_count || 1} Seasons • {r.episode_count || 'N/A'} Episodes • Requested: {r.seasons_requested || 'All'}
-                        </p>
-                      )}
+                      {/* Right: Action Buttons Group */}
+                      <div className="flex flex-col gap-2 shrink-0 w-full sm:w-36 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
+                        <button
+                          onClick={() => updateStatus(r.id, 'done', adminNoteInput[r.id] || '')}
+                          className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 rounded-xl transition shadow flex items-center justify-center gap-1.5"
+                        >
+                          <span>✓</span> Done
+                        </button>
 
-                      <p className="text-[11px] text-amber-500 font-semibold mt-0.5">Requested by: {r.requested_by}</p>
-                      {r.user_email && <p className="text-[10px] opacity-60">{r.user_email}</p>}
-                      {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
-
-                      {showNoteBox[r.id] && (
-                        <div className="mt-2 flex gap-1">
-                          <input
-                            type="text"
-                            placeholder="Add approval or decline note"
-                            value={adminNoteInput[r.id] || ''}
-                            onChange={(e) => setAdminNoteInput({ ...adminNoteInput, [r.id]: e.target.value })}
-                            className={`border px-2.5 py-1 text-[10px] rounded-lg flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
-                          />
+                        {r.status !== 'in_progress' && (
                           <button
-                            onClick={() => {
-                              updateStatus(r.id, r.status, adminNoteInput[r.id] || '');
-                              setShowNoteBox({ ...showNoteBox, [r.id]: false });
-                            }}
-                            className="bg-amber-500 text-slate-950 font-bold text-[10px] px-2.5 rounded-lg"
+                            onClick={() => updateStatus(r.id, 'in_progress', adminNoteInput[r.id] || '')}
+                            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs py-2.5 rounded-xl transition shadow flex items-center justify-center gap-1.5"
                           >
-                            Save Note
+                            <span>⚡</span> In Progress
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => updateStatus(r.id, 'declined', adminNoteInput[r.id] || '')}
+                          className="w-full bg-rose-950/70 hover:bg-rose-900 text-rose-300 font-bold text-xs py-2 rounded-xl border border-rose-800/80 transition flex items-center justify-center gap-1.5"
+                        >
+                          <span>✕</span> Decline
+                        </button>
+
+                        <div className="flex items-center justify-between px-1 pt-0.5 text-xs font-semibold">
+                          <button
+                            onClick={() => setShowNoteBox({ ...showNoteBox, [r.id]: !showNoteBox[r.id] })}
+                            className="text-slate-400 hover:text-white transition"
+                          >
+                            {showNoteBox[r.id] ? 'Cancel' : '+ Note'}
+                          </button>
+                          <button
+                            onClick={() => handleDismissOrCancel(r.id)}
+                            className="text-rose-400 hover:text-rose-300 transition"
+                          >
+                            Delete
                           </button>
                         </div>
-                      )}
+                      </div>
                     </div>
+                  );
+                })}
 
-                    <div className="flex flex-col gap-1 shrink-0">
-                      <button
-                        onClick={() => updateStatus(r.id, 'done', adminNoteInput[r.id] || '')}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
-                      >
-                        ✓ Done
-                      </button>
-                      {r.status !== 'in_progress' && (
-                        <button
-                          onClick={() => updateStatus(r.id, 'in_progress', adminNoteInput[r.id] || '')}
-                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
-                        >
-                          ⚡ In Progress
-                        </button>
-                      )}
-                      <button
-                        onClick={() => updateStatus(r.id, 'declined', adminNoteInput[r.id] || '')}
-                        className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-3 py-1.5 rounded-lg"
-                      >
-                        ✕ Decline
-                      </button>
-                      <button
-                        onClick={() => setShowNoteBox({ ...showNoteBox, [r.id]: !showNoteBox[r.id] })}
-                        className="text-[9px] opacity-60 hover:opacity-100"
-                      >
-                        + Note
-                      </button>
-                      <button
-                        onClick={() => handleDismissOrCancel(r.id)}
-                        className="text-[9px] text-rose-400 hover:underline text-right"
-                      >
-                        Delete
-                      </button>
-                    </div>
+                {adminFilteredRequests.length === 0 && (
+                  <div className={`p-8 text-center rounded-2xl border text-xs opacity-60 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/60 border-slate-800'}`}>
+                    No active {adminQueueFilter === 'all' ? '' : adminQueueFilter === 'movie' ? 'movie' : 'TV show'} requests in the queue!
                   </div>
-                );
-              })}
-
-              {adminSortedRequests.length === 0 && (
-                <p className="opacity-60 text-center py-8 text-xs">All requests have been handled!</p>
-              )}
+                )}
+              </div>
             </div>
           </section>
         )}
@@ -1686,7 +1791,7 @@ export default function Home() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
             <span className="text-[10px]">
-              Admin {userRequests.filter(r => r.status === 'pending').length > 0 && `(${userRequests.filter(r => r.status === 'pending').length})`}
+              Admin {allActiveRequests.length > 0 && `(${allActiveRequests.length})`}
             </span>
           </button>
         )}
