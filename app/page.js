@@ -27,15 +27,16 @@ function cleanYear(yr) {
   return match ? match[0] : '';
 }
 
+// Compact theatrical labels to prevent badge squeezing on mobile
 function getTheatricalStatus(releaseDateStr, mediaType) {
   if (!releaseDateStr || mediaType === 'tv') return null;
   const release = new Date(releaseDateStr);
   const now = new Date();
   if (isNaN(release.getTime())) return null;
 
-  if (release > now) return 'Upcoming / In Theaters';
+  if (release > now) return 'Upcoming';
   const diffDays = Math.floor((now - release) / (1000 * 60 * 60 * 24));
-  if (diffDays <= 75) return 'In Theaters / Pre-Digital';
+  if (diffDays <= 75) return 'In Theaters';
   return null;
 }
 
@@ -81,7 +82,7 @@ export default function Home() {
 
   // Search & Catalog
   const [search, setSearch] = useState('');
-  const [searchFilter, setSearchFilter] = useState('all'); // 'all' | 'movie' | 'tv'
+  const [searchFilter, setSearchFilter] = useState('all');
   const [selectedGenre, setSelectedGenre] = useState('trending');
   const [showExtendedGenres, setShowExtendedGenres] = useState(false);
   const [results, setResults] = useState([]);
@@ -98,7 +99,7 @@ export default function Home() {
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(false);
 
-  // Admin Superpowers & System Settings
+  // Admin Settings
   const [requestsPaused, setRequestsPaused] = useState(false);
   const [pinnedHero, setPinnedHero] = useState(null);
   const [discordWebhook, setDiscordWebhook] = useState('');
@@ -162,6 +163,17 @@ export default function Home() {
   const fetchProfiles = async () => {
     const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
     if (data) setProfiles(data);
+  };
+
+  // Reset to Home Screen Function
+  const handleResetHome = () => {
+    setSearch('');
+    setSearchFilter('all');
+    setSelectedGenre('trending');
+    setShowExtendedGenres(false);
+    setActiveTab('search');
+    setSelectedMedia(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Auth Handlers
@@ -295,7 +307,7 @@ export default function Home() {
     loadDiscovery();
   }, [selectedGenre, search]);
 
-  // Search Multi TMDB with Quick Filter Toggles
+  // Search Multi TMDB
   useEffect(() => {
     if (!search.trim()) return;
 
@@ -377,7 +389,6 @@ export default function Home() {
     });
   };
 
-  // Open Details Modal with Trailer, Watch Providers & TV Seasons
   const handleOpenDetails = async (item) => {
     const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     let trailerKey = null;
@@ -405,7 +416,6 @@ export default function Home() {
     setSelectedMedia({ ...fullDetails, trailerKey, media_type: type });
   };
 
-  // Upvoting (+1) Logic
   const handleUpvote = async (requestId, currentUpvotes = []) => {
     if (!currentUser) return;
     const userEmail = currentUser.email.toLowerCase();
@@ -427,24 +437,20 @@ export default function Home() {
     }
   };
 
-  // Request Submission
   const handleRequest = async (item) => {
     if (!currentUser) return;
 
-    // Server Maintenance / Pause Check
     if (requestsPaused && !currentUser.is_admin) {
       alert("⚠️ Requesting is temporarily paused for server maintenance. Please check back later!");
       return;
     }
 
-    // Role: Movies Only Check
     const mediaType = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     if (currentUser.role === 'movies_only' && mediaType === 'tv' && !currentUser.is_admin) {
       alert("Your account is set to Movies Only. TV Show requests are disabled.");
       return;
     }
 
-    // Role: VIP vs Standard Queue Cap Check
     const userPendingCount = userRequests.filter(
       r => r.user_email?.toLowerCase() === currentUser.email?.toLowerCase() && r.status === 'pending'
     ).length;
@@ -542,7 +548,6 @@ export default function Home() {
     }
   };
 
-  // Admin Superpowers: Billboard Pinning
   const handlePinBillboard = async (media) => {
     const payload = media ? {
       title: media.title || media.name,
@@ -566,7 +571,6 @@ export default function Home() {
     }
   };
 
-  // Admin Superpowers: Freeze Requests Switch
   const handleToggleFreeze = async () => {
     const next = !requestsPaused;
     const { error } = await supabase.from('site_settings').upsert({
@@ -580,7 +584,6 @@ export default function Home() {
     }
   };
 
-  // Admin User Directory Controls
   const handleAdminChangeUserRole = async (profileId, role) => {
     await supabase.from('profiles').update({ role }).eq('id', profileId);
     fetchProfiles();
@@ -688,13 +691,9 @@ export default function Home() {
   const isVip = currentUser?.role === 'vip' || currentUser?.is_admin;
   const isCapped = !isVip && activePendingCount >= DEFAULT_MAX_ACTIVE_REQUESTS;
 
-  // Active Hero Billboard (Pinned hero overrides daily trending #1)
   const heroItem = pinnedHero || ((!search.trim() && selectedGenre === 'trending' && results.length > 0 && results[0]?.backdrop_path) ? results[0] : null);
-
-  // Recently Added to Plex shelf (up to 10 latest 'done' requests)
   const recentlyAdded = userRequests.filter(r => r.status === 'done').slice(0, 10);
 
-  // Leaderboard Calculation
   const requesterCounts = {};
   userRequests.forEach(r => {
     const key = r.requested_by || 'Anonymous';
@@ -702,7 +701,6 @@ export default function Home() {
   });
   const sortedRequesters = Object.entries(requesterCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
 
-  // Sort Admin Requests Queue by Upvotes
   const adminSortedRequests = [...userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress')].sort(
     (a, b) => (b.upvoted_by?.length || 1) - (a.upvoted_by?.length || 1)
   );
@@ -887,7 +885,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Global Server Maintenance / Pause Notice */}
         {requestsPaused && (
           <div className="bg-rose-950/80 border border-rose-800 text-rose-300 p-3.5 rounded-2xl text-xs flex items-center gap-2.5 shadow-lg">
             <span className="text-lg">⏸️</span>
@@ -905,26 +902,28 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Minimalist Top Bar */}
+        {/* Brand Header: Clicking this resets the app back to the home page & clears search */}
         <header className="flex justify-between items-center py-2">
-          <div className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-lg shadow-amber-500/20">
-              {currentUser.name.charAt(0).toUpperCase()}
-            </span>
-            <div>
-              <h1 className="text-base font-black tracking-tight leading-none">
-                {currentUser.name}
-              </h1>
-              <p className="text-[11px] opacity-60">
-                {currentUser.is_admin ? (
-                  <span className="text-amber-500 font-bold">Admin Privileges</span>
+          <div 
+            onClick={handleResetHome}
+            className="cursor-pointer group select-none text-left"
+            title="Reset to Home Page"
+          >
+            <h1 className="text-lg font-black tracking-tight text-amber-500 group-hover:text-amber-400 transition leading-tight">
+              Plex Requests
+            </h1>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center">
+                {currentUser.name.charAt(0).toUpperCase()}
+              </span>
+              <p className="text-xs opacity-75 font-medium leading-none">
+                {currentUser.name} {currentUser.is_admin ? (
+                  <span className="text-amber-400 font-bold">(Admin)</span>
                 ) : currentUser.role === 'vip' ? (
-                  <span className="text-purple-400 font-bold">VIP Unlimited</span>
+                  <span className="text-purple-400 font-bold">(VIP)</span>
                 ) : currentUser.role === 'movies_only' ? (
-                  <span className="text-sky-400 font-bold">Movies Only</span>
-                ) : (
-                  'Server Requester'
-                )}
+                  <span className="text-sky-400 font-bold">(Movies)</span>
+                ) : null}
               </p>
             </div>
           </div>
@@ -1006,7 +1005,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* "Recently Added to Plex" Carousel */}
+            {/* "Recently Added to Plex" Shelf */}
             {!search.trim() && recentlyAdded.length > 0 && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -1040,7 +1039,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Search Bar with Autocomplete & Filter Toggles */}
+            {/* Search Bar with Quick Clear Button */}
             <div className="space-y-2">
               <div className="relative">
                 <input
@@ -1053,7 +1052,8 @@ export default function Home() {
                 {search.trim() ? (
                   <button 
                     onClick={() => setSearch('')}
-                    className="absolute right-3.5 top-3.5 text-xs opacity-50 hover:opacity-100 p-1"
+                    className="absolute right-3.5 top-3.5 text-xs opacity-50 hover:opacity-100 p-1 font-bold"
+                    aria-label="Clear Search"
                   >
                     ✕
                   </button>
@@ -1064,7 +1064,6 @@ export default function Home() {
                 ) : null}
               </div>
 
-              {/* Quick Filter Pills (All / Movies Only / TV Only) */}
               {search.trim() && (
                 <div className="flex gap-2">
                   {['all', 'movie', 'tv'].map((type) => (
@@ -1137,7 +1136,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Media Grid */}
+            {/* Media Grid (With Single-Line Locked Star Badges) */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
@@ -1174,14 +1173,15 @@ export default function Home() {
 
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent" />
 
-                      <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start pointer-events-none">
+                      {/* Top Badges: Theatrical on left (truncated if long), Stars strictly locked on right */}
+                      <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start gap-1 pointer-events-none">
                         {theatricalBadge ? (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow truncate shrink min-w-0">
                             {theatricalBadge}
                           </span>
                         ) : <div />}
 
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-amber-400 border border-white/10">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/75 backdrop-blur text-amber-400 border border-white/10 shrink-0 whitespace-nowrap flex items-center gap-0.5">
                           ★ {item.vote_average ? item.vote_average.toFixed(1) : 'N/A'}
                         </span>
                       </div>
@@ -1213,7 +1213,6 @@ export default function Home() {
                                 ✕ Cancel {currentUser.is_admin && !isUserOwner && '(Admin)'}
                               </button>
                             ) : (
-                              // Upvoting (+1) Button for other users
                               <button
                                 onClick={() => handleUpvote(matchingRequest.id, matchingRequest.upvoted_by)}
                                 disabled={hasUpvoted}
@@ -1322,7 +1321,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Leaderboard & Storage Insights */}
+            {/* Server Activity Leaderboard */}
             <div className={`border p-4 rounded-2xl space-y-2.5 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500">Server Activity Leaderboard</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1404,7 +1403,7 @@ export default function Home() {
               </button>
             </div>
 
-            {/* User Directory with VIP & Permissions Dropdown */}
+            {/* User Directory */}
             <div className={`border p-4 rounded-2xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <div className="flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500">Registered Users ({profiles.length})</h3>
@@ -1429,7 +1428,6 @@ export default function Home() {
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      {/* Permission Role Selector */}
                       {!p.is_admin && (
                         <select
                           value={p.role || 'standard'}
@@ -1463,7 +1461,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Active Requests Queue (with Episode warnings & Upvotes) */}
+            {/* Active Requests Queue */}
             <div className="space-y-3">
               <h3 className="font-bold text-xs opacity-75">Active Requests Queue (Ranked by Demand):</h3>
 
@@ -1493,7 +1491,6 @@ export default function Home() {
                         )}
                       </div>
 
-                      {/* TV Size & Season Details Warning */}
                       {isTv && (
                         <p className="text-[10px] text-purple-300 font-semibold mt-0.5">
                           {r.season_count || 1} Seasons • {r.episode_count || 'N/A'} Episodes • Requested: {r.seasons_requested || 'All'}
@@ -1504,7 +1501,6 @@ export default function Home() {
                       {r.user_email && <p className="text-[10px] opacity-60">{r.user_email}</p>}
                       {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
 
-                      {/* Universal Note Input for Approval or Decline */}
                       {showNoteBox[r.id] && (
                         <div className="mt-2 flex gap-1">
                           <input
@@ -1583,7 +1579,13 @@ export default function Home() {
         }`}
       >
         <button
-          onClick={() => setActiveTab('search')}
+          onClick={() => {
+            if (activeTab === 'search') {
+              handleResetHome();
+            } else {
+              setActiveTab('search');
+            }
+          }}
           className={`flex-1 py-2 px-3 rounded-2xl flex flex-col items-center gap-0.5 transition ${
             activeTab === 'search' 
               ? 'bg-amber-500 text-slate-950 font-bold shadow-md' 
@@ -1645,7 +1647,6 @@ export default function Home() {
         return (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
             <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl`}>
-              {/* Rich Backdrop Header */}
               {selectedMedia.backdrop_path ? (
                 <div className="relative -mx-5 -mt-5 sm:-mx-6 sm:-mt-6 aspect-[16/9] overflow-hidden rounded-t-3xl border-b border-white/10">
                   <img 
@@ -1686,30 +1687,28 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Title & Metadata */}
               <div>
                 <h3 className="text-xl font-black">{selectedMedia.title || selectedMedia.name}</h3>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                   <span className="text-xs opacity-60">
                     {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()}
                   </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 shrink-0 whitespace-nowrap">
                     ★ {selectedMedia.vote_average?.toFixed(1)}
                   </span>
                   {theatricalStatus && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-700">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-700 shrink-0 whitespace-nowrap">
                       {theatricalStatus}
                     </span>
                   )}
                   {isTv && selectedMedia.number_of_episodes && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800 shrink-0 whitespace-nowrap">
                       {seasonCount} Seasons • {selectedMedia.number_of_episodes} Episodes
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* "Where to Stream" JustWatch Badges */}
               {watchProviders.length > 0 && (
                 <div className="space-y-1.5 pt-1">
                   <p className="text-[11px] font-bold opacity-70">Already Streaming On:</p>
@@ -1724,7 +1723,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* TV Season Selector */}
               {isTv && seasonCount > 1 && !modalStatus && (
                 <div className="space-y-1.5 pt-1">
                   <p className="text-[11px] font-bold opacity-70">Select Seasons to Request:</p>
@@ -1767,7 +1765,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* YouTube Trailer */}
               {selectedMedia.trailerKey ? (
                 <div className="aspect-video w-full rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-inner">
                   <iframe
