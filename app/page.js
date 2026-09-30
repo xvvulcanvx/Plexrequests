@@ -139,7 +139,6 @@ export default function Home() {
     }
   };
 
-  // Queue Hygiene: Only fetch active items or items resolved in the last 30 days
   const fetchUserRequests = async () => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -245,7 +244,6 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // Auth: Fetch Password Hint
   const handleFetchPasswordHint = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -409,7 +407,6 @@ export default function Home() {
     setSelectedMedia({ ...item, trailerKey, media_type: type });
   };
 
-  // Request Submission with Anti-Spam Cap
   const handleRequest = async (item) => {
     if (!currentUser) return;
     const title = item.title || item.name;
@@ -417,13 +414,12 @@ export default function Home() {
     const year = cleanYear(item.release_date || item.first_air_date || '');
     const tmdbId = String(item.id);
 
-    // Anti-Spam Check: Enforce max active pending requests for regular users
     const userPendingCount = userRequests.filter(
       r => r.user_email?.toLowerCase() === currentUser.email?.toLowerCase() && r.status === 'pending'
     ).length;
 
     if (!currentUser.is_admin && userPendingCount >= MAX_ACTIVE_REQUESTS) {
-      alert(`Request limit reached! You already have ${MAX_ACTIVE_REQUESTS} active pending requests. Please wait for an admin to process them before submitting more.`);
+      alert(`Request limit reached! You already have ${MAX_ACTIVE_REQUESTS} active pending requests.`);
       return;
     }
 
@@ -502,7 +498,6 @@ export default function Home() {
     }
   };
 
-  // Admin Auto-Prune Button
   const handlePruneOldRequests = async () => {
     if (!confirm('Permanently delete all Done and Declined requests older than 30 days?')) return;
     const thirtyDaysAgo = new Date();
@@ -522,7 +517,6 @@ export default function Home() {
     }
   };
 
-  // User Settings
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
@@ -553,7 +547,6 @@ export default function Home() {
     }
   };
 
-  // Admin Directory Actions
   const handleAdminRenameUser = async (profileId, oldName, userEmail) => {
     const newName = prompt('Enter new display name for user:', oldName);
     if (!newName || newName.trim() === oldName) return;
@@ -626,10 +619,13 @@ export default function Home() {
   };
 
   const isLight = theme === 'light';
-
-  // Requests filtered strictly to current user's email
   const visibleRequests = userRequests.filter(r => r.user_email?.toLowerCase() === currentUser?.email?.toLowerCase());
   const activePendingCount = visibleRequests.filter(r => r.status === 'pending').length;
+
+  // #1 Trending Hero Title
+  const heroItem = (!search.trim() && selectedGenre === 'trending' && results.length > 0 && results[0]?.backdrop_path) 
+    ? results[0] 
+    : null;
 
   // ==========================================
   // VIEW: AUTHENTICATION / SIGN IN SCREEN
@@ -637,7 +633,7 @@ export default function Home() {
   if (!currentUser) {
     return (
       <main className={`min-h-screen ${isLight ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'} flex items-center justify-center p-4 font-sans transition-colors duration-200`}>
-        <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border p-6 rounded-2xl max-w-sm w-full space-y-5 shadow-2xl`}>
+        <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border p-6 rounded-3xl max-w-sm w-full space-y-5 shadow-2xl`}>
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-black text-amber-500 tracking-tight">Plex Requests</h1>
             <p className="text-xs opacity-70">
@@ -648,16 +644,16 @@ export default function Home() {
           </div>
 
           {authMode !== 'forgot' && (
-            <div className="flex bg-slate-950/40 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+            <div className="flex bg-slate-950/40 p-1 rounded-2xl border border-slate-800 text-xs font-bold">
               <button
                 onClick={() => { setAuthMode('signin'); setAuthError(''); setAuthSuccess(''); }}
-                className={`flex-1 py-2 rounded-lg transition ${authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
+                className={`flex-1 py-2 rounded-xl transition ${authMode === 'signin' ? 'bg-amber-500 text-slate-950 shadow-md' : 'opacity-60 hover:opacity-100'}`}
               >
                 Sign In
               </button>
               <button
                 onClick={() => { setAuthMode('signup'); setAuthError(''); setAuthSuccess(''); }}
-                className={`flex-1 py-2 rounded-lg transition ${authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'opacity-60 hover:opacity-100'}`}
+                className={`flex-1 py-2 rounded-xl transition ${authMode === 'signup' ? 'bg-amber-500 text-slate-950 shadow-md' : 'opacity-60 hover:opacity-100'}`}
               >
                 Create Account
               </button>
@@ -665,13 +661,13 @@ export default function Home() {
           )}
 
           {authError && (
-            <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-800 p-2.5 rounded-lg text-center font-medium">
+            <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-800 p-2.5 rounded-xl text-center font-medium">
               {authError}
             </p>
           )}
 
           {authSuccess && (
-            <p className="text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800 p-2.5 rounded-lg text-center font-medium">
+            <p className="text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-800 p-2.5 rounded-xl text-center font-medium">
               {authSuccess}
             </p>
           )}
@@ -732,7 +728,7 @@ export default function Home() {
                   <label className="text-xs font-semibold">Password Hint (Optional)</label>
                   <input
                     type="text"
-                    placeholder="e.g. My first pet"
+                    placeholder="e.g. Favorite sports team"
                     value={authHint}
                     onChange={(e) => setAuthHint(e.target.value)}
                     className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
@@ -744,7 +740,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={authLoading}
-                className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 text-xs transition mt-2 disabled:opacity-50"
+                className="w-full bg-amber-500 hover:bg-amber-600 font-bold py-3 rounded-xl text-slate-950 text-xs transition mt-2 disabled:opacity-50 shadow-lg shadow-amber-500/20"
               >
                 {authLoading ? 'Please wait...' : authMode === 'signin' ? 'Sign In' : 'Register Account'}
               </button>
@@ -803,33 +799,33 @@ export default function Home() {
   // VIEW: MAIN APPLICATION
   // ==========================================
   return (
-    <div className={`min-h-screen ${isLight ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'} font-sans transition-colors duration-200`}>
-      <div className="max-w-2xl mx-auto pb-24 p-4">
+    <div className={`min-h-screen ${isLight ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'} font-sans transition-colors duration-200 pb-32`}>
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
         {toastMessage && (
-          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-2xl animate-bounce text-center max-w-[90%]">
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-950 font-bold px-5 py-2.5 rounded-2xl text-xs shadow-2xl animate-bounce text-center max-w-[90%]">
             {toastMessage}
           </div>
         )}
 
         {bannerActive && bannerMessage && (
-          <aside aria-label="Announcement" className="mb-4 bg-amber-500/10 border border-amber-500/30 text-amber-500 p-3 rounded-xl text-xs flex items-center gap-2 shadow-inner">
+          <aside aria-label="Announcement" className="bg-amber-500/10 border border-amber-500/30 text-amber-500 p-3 rounded-2xl text-xs flex items-center gap-2 shadow-inner">
             <span className="text-base" aria-hidden="true">📢</span>
             <p className="font-semibold flex-1">{bannerMessage}</p>
           </aside>
         )}
 
-        {/* Header */}
-        <header className="flex justify-between items-center py-3 mb-2">
-          <div className="text-left">
-            <h1 className="text-xl font-black tracking-tight text-amber-500">
-              Plex Requests
-            </h1>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="w-4 h-4 rounded-full bg-amber-500 text-slate-950 font-black text-[9px] flex items-center justify-center">
-                {currentUser.name.charAt(0).toUpperCase()}
-              </span>
-              <p className="text-xs opacity-70">
-                {currentUser.name} {currentUser.is_admin && <span className="text-amber-500 font-bold">(Admin)</span>}
+        {/* Minimalist Header */}
+        <header className="flex justify-between items-center py-2">
+          <div className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-lg shadow-amber-500/20">
+              {currentUser.name.charAt(0).toUpperCase()}
+            </span>
+            <div>
+              <h1 className="text-base font-black tracking-tight leading-none">
+                {currentUser.name}
+              </h1>
+              <p className="text-[11px] opacity-60">
+                {currentUser.is_admin ? <span className="text-amber-500 font-bold">Admin Privileges</span> : 'Server Requester'}
               </p>
             </div>
           </div>
@@ -842,7 +838,7 @@ export default function Home() {
                 setTempHint(currentUser.password_hint || '');
                 setShowSettings(true); 
               }}
-              className={`p-2 rounded-xl border ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} opacity-75 hover:opacity-100 transition`}
+              className={`p-2.5 rounded-2xl border ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'} hover:border-amber-500/50 transition`}
               title="Account Settings"
               aria-label="Settings"
             >
@@ -850,75 +846,94 @@ export default function Home() {
             </button>
             <button 
               onClick={handleLogout}
-              className={`text-xs px-2.5 py-2 rounded-xl border font-bold ${isLight ? 'bg-white border-slate-300 text-rose-600' : 'bg-slate-900 border-slate-800 text-rose-400'} hover:opacity-100`}
+              className={`text-xs px-3 py-2.5 rounded-2xl border font-bold ${isLight ? 'bg-white border-slate-300 text-rose-600' : 'bg-slate-900/80 border-slate-800 text-rose-400'} hover:border-rose-500/50 transition`}
             >
               Log Out
             </button>
           </div>
         </header>
 
-        {/* Navigation Tabs */}
-        <nav aria-label="Main Navigation" className={`flex ${isLight ? 'bg-white/80' : 'bg-slate-900/80'} backdrop-blur p-1 rounded-xl mb-5 border ${isLight ? 'border-slate-300' : 'border-slate-800'} text-xs font-semibold`}>
-          <button
-            onClick={() => setActiveTab('search')}
-            className={`flex-1 py-2 rounded-lg transition ${activeTab === 'search' ? 'bg-amber-500 text-slate-950 font-bold shadow' : 'opacity-60 hover:opacity-100'}`}
-          >
-            Search
-          </button>
-
-          <button
-            onClick={() => setActiveTab('list')}
-            className={`flex-1 py-2 rounded-lg transition ${activeTab === 'list' ? 'bg-amber-500 text-slate-950 font-bold shadow' : 'opacity-60 hover:opacity-100'}`}
-          >
-            My Requests ({visibleRequests.length})
-          </button>
-
-          {currentUser.is_admin && (
-            <button
-              onClick={() => setActiveTab('admin')}
-              className={`flex-1 py-2 rounded-lg transition ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 font-bold shadow' : 'opacity-60 hover:opacity-100'}`}
-            >
-              Admin {userRequests.filter(r => r.status === 'pending').length > 0 && `(${userRequests.filter(r => r.status === 'pending').length})`}
-            </button>
-          )}
-        </nav>
-
-        {/* Search & Discovery Tab */}
+        {/* Tab 1: Search & Discovery */}
         {activeTab === 'search' && (
-          <section className="space-y-4">
+          <section className="space-y-5">
+            {/* Cinematic Hero Billboard (Featured #1 Trending Title) */}
+            {heroItem && (
+              <div 
+                onClick={() => handleOpenDetails(heroItem)}
+                className="relative rounded-3xl overflow-hidden aspect-[16/9] sm:aspect-[21/9] border border-white/10 shadow-2xl cursor-pointer group"
+              >
+                <img 
+                  src={`https://image.tmdb.org/t/p/w1280${heroItem.backdrop_path}`} 
+                  alt={heroItem.title || heroItem.name} 
+                  className="w-full h-full object-cover group-hover:scale-105 transition duration-700 ease-out"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+                
+                <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-7 flex flex-col justify-end gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-500 text-slate-950 font-black text-[10px] uppercase px-2 py-0.5 rounded-full tracking-wider">
+                      #1 Featured
+                    </span>
+                    <span className="text-xs font-semibold text-white/90">
+                      ★ {heroItem.vote_average?.toFixed(1)} • {cleanYear(heroItem.release_date || heroItem.first_air_date)}
+                    </span>
+                  </div>
+
+                  <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight drop-shadow-md line-clamp-1">
+                    {heroItem.title || heroItem.name}
+                  </h2>
+
+                  <p className="text-xs text-white/80 line-clamp-2 max-w-xl font-normal hidden sm:block">
+                    {heroItem.overview}
+                  </p>
+
+                  <div className="flex items-center gap-2 pt-2">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleOpenDetails(heroItem); }}
+                      className="bg-white/20 hover:bg-white/30 backdrop-blur-md text-white font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5"
+                    >
+                      ▶ Details & Trailer
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Search Bar */}
             <div className="relative">
               <input
                 type="text"
                 placeholder="Search movies & TV shows..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className={`w-full ${isLight ? 'bg-white border-slate-300 placeholder-slate-400' : 'bg-slate-900/90 border-slate-800 placeholder-slate-500'} border focus:border-amber-500 px-4 py-3 rounded-xl outline-none text-sm shadow-inner`}
+                className={`w-full ${isLight ? 'bg-white border-slate-300 placeholder-slate-400' : 'bg-slate-900/90 border-slate-800 placeholder-slate-500'} border focus:border-amber-500 px-5 py-3.5 rounded-2xl outline-none text-sm shadow-inner transition`}
               />
               {loading && (
-                <span className="absolute right-4 top-3 text-xs text-amber-500 animate-pulse font-medium">
+                <span className="absolute right-4 top-3.5 text-xs text-amber-500 animate-pulse font-medium">
                   Searching...
                 </span>
               )}
             </div>
 
-            {/* Request Cap Notice for Standard Users */}
+            {/* Request Cap Notice */}
             {!currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS && (
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-400 flex items-center justify-between">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-400 flex items-center gap-2">
                 <span>⚠️ Queue full ({activePendingCount}/{MAX_ACTIVE_REQUESTS} pending). Requesting is paused until items are processed.</span>
               </div>
             )}
 
+            {/* Horizontal Genre Chips */}
             {!search.trim() && (
               <div className="space-y-2">
-                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-medium">
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-semibold">
                   {PRIMARY_GENRES.map((chip) => (
                     <button
                       key={chip.id}
                       onClick={() => setSelectedGenre(chip.id)}
-                      className={`px-3 py-1.5 rounded-full border shrink-0 transition ${
+                      className={`px-3.5 py-2 rounded-xl border shrink-0 transition ${
                         selectedGenre === chip.id
-                          ? 'bg-amber-500 border-amber-500 text-slate-950 font-bold'
-                          : `${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/60 border-slate-800'} opacity-70 hover:opacity-100`
+                          ? 'bg-amber-500 border-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
+                          : `${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'} opacity-75 hover:opacity-100`
                       }`}
                     >
                       {chip.label}
@@ -927,19 +942,19 @@ export default function Home() {
 
                   <button
                     onClick={() => setShowExtendedGenres(!showExtendedGenres)}
-                    className={`px-3 py-1.5 rounded-full border shrink-0 font-bold transition ${showExtendedGenres ? 'bg-amber-500 text-slate-950 border-amber-500' : `${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/60 border-slate-800'} text-amber-500`}`}
+                    className={`px-3.5 py-2 rounded-xl border shrink-0 font-bold transition ${showExtendedGenres ? 'bg-amber-500 text-slate-950 border-amber-500' : `${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'} text-amber-500`}`}
                   >
                     {showExtendedGenres ? '✕ Close' : '+ More'}
                   </button>
                 </div>
 
                 {showExtendedGenres && (
-                  <div className={`p-2.5 rounded-xl border grid grid-cols-4 gap-1.5 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/90 border-slate-800'}`}>
+                  <div className={`p-3 rounded-2xl border grid grid-cols-4 gap-1.5 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/90 border-slate-800'}`}>
                     {EXTENDED_GENRES.map((chip) => (
                       <button
                         key={chip.id}
                         onClick={() => { setSelectedGenre(chip.id); setShowExtendedGenres(false); }}
-                        className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border text-center truncate ${
+                        className={`py-2 px-2 rounded-xl text-[11px] font-medium border text-center truncate ${
                           selectedGenre === chip.id
                             ? 'bg-amber-500 border-amber-500 text-slate-950 font-bold'
                             : `${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'} opacity-75 hover:opacity-100`
@@ -953,120 +968,138 @@ export default function Home() {
               </div>
             )}
 
-            {/* Media Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {results.map((item) => {
-                const title = item.title || item.name;
-                const year = cleanYear(item.release_date || item.first_air_date || '');
-                const theatricalBadge = getTheatricalStatus(item.release_date, item.media_type);
-                
-                const matchingRequest = findDbMatch(item);
-                const status = matchingRequest?.status?.toLowerCase().trim();
-                const isUserOwner = matchingRequest?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
-                const canCancel = isUserOwner || currentUser.is_admin;
-                const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
+            {/* Media Grid with Shimmer Skeletons & Edge-to-Edge Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+              {loading ? (
+                // Shimmer Skeleton Placeholders
+                Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="aspect-[2/3] rounded-3xl bg-slate-800/40 border border-slate-800/60 animate-pulse flex flex-col justify-end p-4 space-y-2">
+                    <div className="h-4 bg-slate-700/60 rounded-lg w-3/4"></div>
+                    <div className="h-3 bg-slate-700/40 rounded-lg w-1/2"></div>
+                    <div className="h-8 bg-slate-700/50 rounded-xl w-full mt-2"></div>
+                  </div>
+                ))
+              ) : (
+                results.map((item) => {
+                  const title = item.title || item.name;
+                  const year = cleanYear(item.release_date || item.first_air_date || '');
+                  const theatricalBadge = getTheatricalStatus(item.release_date, item.media_type);
+                  
+                  const matchingRequest = findDbMatch(item);
+                  const status = matchingRequest?.status?.toLowerCase().trim();
+                  const isUserOwner = matchingRequest?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
+                  const canCancel = isUserOwner || currentUser.is_admin;
+                  const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
 
-                return (
-                  <div 
-                    key={item.id} 
-                    className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/70 border-slate-800/80'} border rounded-xl overflow-hidden flex flex-col justify-between group transition`}
-                  >
+                  return (
                     <div 
-                      onClick={() => handleOpenDetails(item)} 
-                      className="relative aspect-[2/3] cursor-pointer overflow-hidden bg-slate-950"
+                      key={item.id} 
+                      className="group relative aspect-[2/3] rounded-3xl overflow-hidden border border-white/10 hover:border-amber-500/50 hover:shadow-[0_0_25px_rgba(245,158,11,0.2)] transition-all duration-300 flex flex-col justify-end bg-slate-950 shadow-lg cursor-pointer"
+                      onClick={() => handleOpenDetails(item)}
                     >
+                      {/* Edge-to-Edge Poster Image */}
                       <img 
                         src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} 
                         alt={title} 
-                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300" 
+                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition duration-500 ease-out" 
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent opacity-80" />
-                      
-                      {theatricalBadge && (
-                        <span className="absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
-                          {theatricalBadge}
+
+                      {/* Deep Bottom Gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent" />
+
+                      {/* Top Badges */}
+                      <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start pointer-events-none">
+                        {theatricalBadge ? (
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
+                            {theatricalBadge}
+                          </span>
+                        ) : <div />}
+
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-amber-400 border border-white/10">
+                          ★ {item.vote_average ? item.vote_average.toFixed(1) : 'N/A'}
                         </span>
-                      )}
-
-                      <span className="absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-black/60 backdrop-blur text-amber-400">
-                        ★ {item.vote_average ? item.vote_average.toFixed(1) : 'N/A'}
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 flex flex-col flex-1 justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-xs line-clamp-1">{title}</p>
-                        <p className="text-[11px] opacity-60">{year || 'N/A'} • {(item.media_type || (item.first_air_date ? 'tv' : 'movie')).toUpperCase()}</p>
                       </div>
 
-                      {status === 'done' ? (
-                        <button
-                          onClick={() => openPlexNative(title)}
-                          className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800 text-center hover:bg-emerald-900 transition"
-                        >
-                          ▶ Open in Plex
-                        </button>
-                      ) : status === 'in_progress' ? (
-                        <span className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-blue-950 text-blue-400 border border-blue-800 text-center">
-                          ⚡ In Progress
-                        </span>
-                      ) : status === 'pending' ? (
-                        canCancel ? (
-                          <button
-                            onClick={() => handleDismissOrCancel(matchingRequest.id)}
-                            className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-800 transition"
-                          >
-                            ✕ Cancel Request {currentUser.is_admin && !isUserOwner && '(Admin)'}
-                          </button>
-                        ) : (
-                          <span className="w-full py-1.5 text-[11px] font-bold rounded-lg bg-slate-800 text-slate-500 text-center truncate">
-                            Requested by {matchingRequest.requested_by || 'User'}
-                          </span>
-                        )
-                      ) : (
-                        <button
-                          onClick={() => handleRequest(item)}
-                          disabled={isCapped}
-                          className={`w-full py-1.5 text-[11px] font-bold rounded-lg transition ${
-                            isCapped 
-                              ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
-                          }`}
-                        >
-                          {isCapped ? 'Limit Reached' : 'Request'}
-                        </button>
-                      )}
+                      {/* Bottom Info & Action Buttons */}
+                      <div className="relative p-3 space-y-2 z-10">
+                        <div>
+                          <p className="font-bold text-xs line-clamp-1 text-white drop-shadow">{title}</p>
+                          <p className="text-[10px] text-white/70">{year || 'N/A'} • {(item.media_type || (item.first_air_date ? 'tv' : 'movie')).toUpperCase()}</p>
+                        </div>
+
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {status === 'done' ? (
+                            <button
+                              onClick={() => openPlexNative(title)}
+                              className="w-full py-2 text-[11px] font-bold rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800 text-center hover:bg-emerald-900 transition shadow"
+                            >
+                              ▶ Open in Plex
+                            </button>
+                          ) : status === 'in_progress' ? (
+                            <div className="w-full py-2 text-[11px] font-bold rounded-xl bg-blue-950 text-blue-400 border border-blue-800 text-center">
+                              ⚡ In Progress
+                            </div>
+                          ) : status === 'pending' ? (
+                            canCancel ? (
+                              <button
+                                onClick={() => handleDismissOrCancel(matchingRequest.id)}
+                                className="w-full py-2 text-[11px] font-bold rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 transition shadow"
+                              >
+                                ✕ Cancel {currentUser.is_admin && !isUserOwner && '(Admin)'}
+                              </button>
+                            ) : (
+                              <div className="w-full py-2 text-[11px] font-bold rounded-xl bg-slate-900/80 border border-white/10 text-slate-400 text-center truncate">
+                                Requested
+                              </div>
+                            )
+                          ) : (
+                            <button
+                              onClick={() => handleRequest(item)}
+                              disabled={isCapped}
+                              className={`w-full py-2 text-[11px] font-bold rounded-xl transition shadow-md ${
+                                isCapped 
+                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                  : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                              }`}
+                            >
+                              {isCapped ? 'Limit Reached' : 'Request'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </section>
         )}
 
-        {/* My Requests Tab */}
+        {/* Tab 2: My Requests */}
         {activeTab === 'list' && (
           <section className="space-y-3">
+            <h2 className="text-sm font-bold opacity-75">Your Pending & Past Requests ({visibleRequests.length})</h2>
+
             {visibleRequests.length === 0 ? (
-              <p className="text-center opacity-60 py-16 text-xs">You have no active requests.</p>
+              <p className="text-center opacity-60 py-20 text-xs">You have no active requests.</p>
             ) : (
               visibleRequests.map((r) => (
-                <div key={r.id} className={`flex gap-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'} border p-2.5 rounded-xl items-center`}>
+                <div key={r.id} className={`flex gap-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'} border p-3 rounded-2xl items-center shadow`}>
                   {r.poster_path ? (
-                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-11 h-16 rounded-lg object-cover" />
+                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded-xl object-cover shrink-0" />
                   ) : (
-                    <div className="w-11 h-16 bg-slate-800 rounded-lg flex items-center justify-center text-[10px] text-slate-500">MEDIA</div>
+                    <div className="w-12 h-16 bg-slate-800 rounded-xl flex items-center justify-center text-[10px] text-slate-500 shrink-0">MEDIA</div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-xs truncate">{r.title} {r.year && <span className="opacity-60 font-normal">({r.year})</span>}</p>
+                    <p className="font-bold text-xs truncate">{r.title} {r.year && <span className="opacity-60 font-normal">({r.year})</span>}</p>
                     <p className="text-[11px] opacity-60">Status: {r.status.toUpperCase()}</p>
                     {r.admin_note && (
                       <p className="text-[10px] text-rose-400 mt-0.5 italic">Note: {r.admin_note}</p>
                     )}
                   </div>
 
-                  <div className="flex flex-col items-end gap-1.5">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  <div className="flex flex-col items-end gap-2">
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                       r.status === 'done' ? 'bg-emerald-950 text-emerald-400 border-emerald-800' :
                       r.status === 'in_progress' ? 'bg-blue-950 text-blue-400 border-blue-800' :
                       r.status === 'declined' ? 'bg-rose-950 text-rose-400 border-rose-800' :
@@ -1090,14 +1123,14 @@ export default function Home() {
           </section>
         )}
 
-        {/* Admin Dashboard */}
+        {/* Tab 3: Admin Dashboard */}
         {activeTab === 'admin' && currentUser.is_admin && (
           <section className="space-y-6">
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold text-emerald-500">● Master Admin Active</span>
               <button 
                 onClick={handlePruneOldRequests}
-                className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg border border-slate-700 font-semibold"
+                className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 font-semibold"
                 title="Deletes resolved requests older than 30 days"
               >
                 🧹 Prune Resolved (&gt;30d)
@@ -1105,17 +1138,17 @@ export default function Home() {
             </div>
 
             {/* Broadcast Announcement */}
-            <div className={`border p-4 rounded-xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+            <div className={`border p-4 rounded-2xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <h3 className="text-xs font-bold text-amber-500 uppercase tracking-wider">Broadcast Announcement</h3>
               <input
                 type="text"
                 placeholder="e.g. Server down for maintenance tonight"
                 value={bannerInput}
                 onChange={(e) => setBannerInput(e.target.value)}
-                className={`w-full border px-3 py-2 rounded-lg text-xs outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+                className={`w-full border px-3.5 py-2.5 rounded-xl text-xs outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
               />
               <div className="flex justify-between items-center">
-                <label className="text-xs opacity-75 flex items-center gap-2">
+                <label className="text-xs opacity-75 flex items-center gap-2 cursor-pointer">
                   <input 
                     type="checkbox" 
                     checked={bannerToggle} 
@@ -1125,7 +1158,7 @@ export default function Home() {
                 </label>
                 <button 
                   onClick={saveAdminSettings} 
-                  className="bg-amber-500 text-slate-950 font-bold text-[11px] px-3 py-1.5 rounded-lg"
+                  className="bg-amber-500 text-slate-950 font-bold text-[11px] px-3.5 py-2 rounded-xl"
                 >
                   Save Banner
                 </button>
@@ -1133,30 +1166,30 @@ export default function Home() {
             </div>
 
             {/* Discord Webhook */}
-            <div className={`border p-4 rounded-xl space-y-2 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+            <div className={`border p-4 rounded-2xl space-y-2 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Discord Webhook Alert</h3>
               <input
                 type="text"
                 placeholder="Paste Discord Webhook URL"
                 value={discordWebhook}
                 onChange={(e) => setDiscordWebhook(e.target.value)}
-                className={`w-full border px-3 py-2 rounded-lg text-xs outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+                className={`w-full border px-3.5 py-2.5 rounded-xl text-xs outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
               />
               <button 
                 onClick={saveAdminSettings} 
-                className="bg-indigo-600 hover:bg-indigo-500 font-bold text-[11px] px-3 py-1.5 rounded-lg text-white"
+                className="bg-indigo-600 hover:bg-indigo-500 font-bold text-[11px] px-3.5 py-2 rounded-xl text-white"
               >
                 Save Webhook
               </button>
             </div>
 
             {/* User Directory */}
-            <div className={`border p-4 rounded-xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+            <div className={`border p-4 rounded-2xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <div className="flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500">Registered Users ({profiles.length})</h3>
                 <button 
                   onClick={handleCopyAllEmails} 
-                  className="text-[10px] font-bold bg-amber-500 text-slate-950 px-2 py-1 rounded-md"
+                  className="text-[10px] font-bold bg-amber-500 text-slate-950 px-2.5 py-1 rounded-lg"
                 >
                   📋 Copy All Emails
                 </button>
@@ -1164,7 +1197,7 @@ export default function Home() {
 
               <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {profiles.map(p => (
-                  <div key={p.id} className={`p-2.5 rounded-lg border flex justify-between items-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
+                  <div key={p.id} className={`p-3 rounded-xl border flex justify-between items-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
                     <div 
                       onClick={() => setInspectUser(p)} 
                       className="cursor-pointer flex-1 min-w-0"
@@ -1203,7 +1236,7 @@ export default function Home() {
 
             {/* User History Inspector Drawer */}
             {inspectUser && (
-              <div className={`p-4 rounded-xl border space-y-3 ${isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
+              <div className={`p-4 rounded-2xl border space-y-3 ${isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
                 <div className="flex justify-between items-center">
                   <h4 className="font-bold text-xs">Request History for: {inspectUser.name} ({inspectUser.email})</h4>
                   <button onClick={() => setInspectUser(null)} className="text-xs opacity-60">✕ Close</button>
@@ -1235,13 +1268,13 @@ export default function Home() {
                 const isTv = (r.media_type || '').toLowerCase() === 'tv';
 
                 return (
-                  <div key={r.id} className={`border p-3 rounded-xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
-                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-11 h-16 rounded object-cover" />
+                  <div key={r.id} className={`border p-3 rounded-2xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+                    <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded-xl object-cover shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
                         
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border uppercase tracking-wider ${
                           isTv 
                             ? 'bg-purple-950 text-purple-300 border-purple-800' 
                             : 'bg-sky-950 text-sky-300 border-sky-800'
@@ -1261,14 +1294,14 @@ export default function Home() {
                             placeholder="Reason (optional)"
                             value={declineNoteInput[r.id] || ''}
                             onChange={(e) => setDeclineNoteInput({ ...declineNoteInput, [r.id]: e.target.value })}
-                            className={`border px-2 py-1 text-[10px] rounded flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
+                            className={`border px-2.5 py-1 text-[10px] rounded-lg flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
                           />
                           <button
                             onClick={() => {
                               updateStatus(r.id, 'declined', declineNoteInput[r.id] || '');
                               setShowNoteBox({ ...showNoteBox, [r.id]: false });
                             }}
-                            className="bg-rose-800 text-white font-bold text-[10px] px-2 rounded"
+                            className="bg-rose-800 text-white font-bold text-[10px] px-2.5 rounded-lg"
                           >
                             Confirm
                           </button>
@@ -1279,21 +1312,21 @@ export default function Home() {
                     <div className="flex flex-col gap-1 shrink-0">
                       <button
                         onClick={() => updateStatus(r.id, 'done')}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
                       >
                         ✓ Done
                       </button>
                       {r.status !== 'in_progress' && (
                         <button
                           onClick={() => updateStatus(r.id, 'in_progress')}
-                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
                         >
                           ⚡ In Progress
                         </button>
                       )}
                       <button
                         onClick={() => updateStatus(r.id, 'declined')}
-                        className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-2.5 py-1.5 rounded-md"
+                        className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-3 py-1.5 rounded-lg"
                       >
                         ✕ Decline
                       </button>
@@ -1315,191 +1348,267 @@ export default function Home() {
               })}
 
               {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').length === 0 && (
-                <p className="opacity-60 text-center py-6 text-xs">All requests have been handled!</p>
+                <p className="opacity-60 text-center py-8 text-xs">All requests have been handled!</p>
               )}
             </div>
           </section>
         )}
+      </div>
 
-        {/* Modal: Media Details & Trailer */}
-        {selectedMedia && (() => {
-          const modalMatch = findDbMatch(selectedMedia);
-          const modalStatus = modalMatch?.status?.toLowerCase().trim();
-          const isUserOwner = modalMatch?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
-          const canCancel = isUserOwner || currentUser.is_admin;
-          const theatricalStatus = getTheatricalStatus(selectedMedia.release_date, selectedMedia.media_type);
-          const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
+      {/* Floating iOS-Style Frosted Bottom Navigation Dock */}
+      <nav 
+        aria-label="Main Navigation" 
+        className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-sm backdrop-blur-xl p-1.5 rounded-3xl border shadow-2xl flex items-center justify-between transition-all duration-300 ${
+          isLight 
+            ? 'bg-white/85 border-slate-300 shadow-slate-400/20' 
+            : 'bg-slate-900/85 border-white/10 shadow-black/60'
+        }`}
+      >
+        <button
+          onClick={() => setActiveTab('search')}
+          className={`flex-1 py-2 px-3 rounded-2xl flex flex-col items-center gap-0.5 transition ${
+            activeTab === 'search' 
+              ? 'bg-amber-500 text-slate-950 font-bold shadow-md' 
+              : 'opacity-60 hover:opacity-100'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+            <circle cx="11" cy="11" r="7"/>
+            <path strokeLinecap="round" d="m20 20-3.5-3.5"/>
+          </svg>
+          <span className="text-[10px]">Search</span>
+        </button>
 
-          return (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-              <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border w-full max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto p-5 space-y-4`}>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-lg font-bold">{selectedMedia.title || selectedMedia.name}</h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <p className="text-xs opacity-60">
-                        {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()} • ★ {selectedMedia.vote_average?.toFixed(1)}
-                      </p>
-                      {theatricalStatus && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700">
-                          {theatricalStatus}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+        <button
+          onClick={() => setActiveTab('list')}
+          className={`flex-1 py-2 px-3 rounded-2xl flex flex-col items-center gap-0.5 transition relative ${
+            activeTab === 'list' 
+              ? 'bg-amber-500 text-slate-950 font-bold shadow-md' 
+              : 'opacity-60 hover:opacity-100'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h9"/>
+          </svg>
+          <span className="text-[10px]">Requests ({visibleRequests.length})</span>
+        </button>
+
+        {currentUser.is_admin && (
+          <button
+            onClick={() => setActiveTab('admin')}
+            className={`flex-1 py-2 px-3 rounded-2xl flex flex-col items-center gap-0.5 transition ${
+              activeTab === 'admin' 
+                ? 'bg-amber-500 text-slate-950 font-bold shadow-md' 
+                : 'opacity-60 hover:opacity-100'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <span className="text-[10px]">
+              Admin {userRequests.filter(r => r.status === 'pending').length > 0 && `(${userRequests.filter(r => r.status === 'pending').length})`}
+            </span>
+          </button>
+        )}
+      </nav>
+
+      {/* Rich Backdrop Details & Trailer Modal */}
+      {selectedMedia && (() => {
+        const modalMatch = findDbMatch(selectedMedia);
+        const modalStatus = modalMatch?.status?.toLowerCase().trim();
+        const isUserOwner = modalMatch?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
+        const canCancel = isUserOwner || currentUser.is_admin;
+        const theatricalStatus = getTheatricalStatus(selectedMedia.release_date, selectedMedia.media_type);
+        const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+            <div className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl`}>
+              {/* Rich Backdrop Header */}
+              {selectedMedia.backdrop_path ? (
+                <div className="relative -mx-5 -mt-5 sm:-mx-6 sm:-mt-6 aspect-[16/9] overflow-hidden rounded-t-3xl border-b border-white/10">
+                  <img 
+                    src={`https://image.tmdb.org/t/p/w780${selectedMedia.backdrop_path}`} 
+                    alt="" 
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30" />
                   <button 
                     onClick={() => setSelectedMedia(null)} 
-                    className="opacity-60 hover:opacity-100 text-lg font-bold p-1"
+                    className="absolute top-4 right-4 bg-black/60 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur transition"
                     aria-label="Close"
                   >
                     ✕
                   </button>
                 </div>
+              ) : (
+                <div className="flex justify-end">
+                  <button onClick={() => setSelectedMedia(null)} className="opacity-60 hover:opacity-100 text-lg font-bold p-1">✕</button>
+                </div>
+              )}
 
-                {selectedMedia.trailerKey ? (
-                  <div className="aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-black">
-                    <iframe
-                      className="w-full h-full"
-                      src={`https://www.youtube.com/embed/${selectedMedia.trailerKey}?autoplay=0`}
-                      title="Trailer"
-                      allowFullScreen
-                    />
-                  </div>
-                ) : (
-                  <p className="text-xs opacity-50 italic">No trailer video available for this title.</p>
-                )}
-
-                <p className="text-xs opacity-80 leading-relaxed">{selectedMedia.overview || 'No synopsis available.'}</p>
-
-                {modalStatus === 'done' ? (
-                  <button
-                    onClick={() => openPlexNative(selectedMedia.title || selectedMedia.name)}
-                    className="w-full py-3 text-xs font-bold rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800 text-center hover:bg-emerald-900 transition"
-                  >
-                    ▶ Open in Plex
-                  </button>
-                ) : modalStatus === 'pending' ? (
-                  canCancel ? (
-                    <button
-                      onClick={() => handleDismissOrCancel(modalMatch.id)}
-                      className="w-full bg-rose-900/60 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3 rounded-xl text-xs transition"
-                    >
-                      ✕ Cancel Request {currentUser.is_admin && !isUserOwner && '(Admin)'}
-                    </button>
-                  ) : (
-                    <button
-                      disabled
-                      className="w-full bg-slate-800 text-slate-500 font-bold py-3 rounded-xl text-xs cursor-not-allowed"
-                    >
-                      Already Requested by {modalMatch?.requested_by || 'User'}
-                    </button>
-                  )
-                ) : (
-                  <button
-                    onClick={() => handleRequest(selectedMedia)}
-                    disabled={isCapped}
-                    className={`w-full font-bold py-3 rounded-xl text-xs transition ${
-                      isCapped 
-                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                    }`}
-                  >
-                    {isCapped ? 'Limit Reached (10 Pending)' : 'Confirm Request'}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Modal: Account Settings */}
-        {showSettings && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <form onSubmit={handleUpdateProfile} className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border p-5 rounded-2xl w-full max-w-sm space-y-4`}>
-              <h3 className="text-sm font-bold">Account Settings</h3>
-
+              {/* Title & Metadata Pills */}
               <div>
-                <label className="text-xs opacity-60">Registered Email (Locked)</label>
-                <input
-                  type="email"
-                  disabled
-                  value={currentUser.email}
-                  className="w-full border border-slate-800 px-3 py-2 rounded-lg text-xs mt-1 bg-slate-800/50 opacity-60 cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs opacity-60">Display Name</label>
-                <input
-                  type="text"
-                  required
-                  value={tempName}
-                  onChange={(e) => setTempName(e.target.value)}
-                  className={`w-full border px-3 py-2 rounded-lg text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs opacity-60">Update Password (optional)</label>
-                <input
-                  type="password"
-                  placeholder="Leave blank to keep same"
-                  value={tempPassword}
-                  onChange={(e) => setTempPassword(e.target.value)}
-                  className={`w-full border px-3 py-2 rounded-lg text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs opacity-60">Update Password Hint (optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. My first pet"
-                  value={tempHint}
-                  onChange={(e) => setTempHint(e.target.value)}
-                  className={`w-full border px-3 py-2 rounded-lg text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs opacity-60">Theme Selection</label>
-                <div className="flex gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => setTheme('dark')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition ${theme === 'dark' ? 'bg-amber-500 text-slate-950 border-amber-500' : 'opacity-60 border-slate-700'}`}
-                  >
-                    🌙 Dark
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTheme('light')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition ${theme === 'light' ? 'bg-amber-500 text-slate-950 border-amber-500' : 'opacity-60 border-slate-300'}`}
-                  >
-                    ☀️ Light
-                  </button>
+                <h3 className="text-xl font-black">{selectedMedia.title || selectedMedia.name}</h3>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className="text-xs opacity-60">
+                    {cleanYear(selectedMedia.release_date || selectedMedia.first_air_date)} • {selectedMedia.media_type.toUpperCase()}
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
+                    ★ {selectedMedia.vote_average?.toFixed(1)}
+                  </span>
+                  {theatricalStatus && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-700">
+                      {theatricalStatus}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setShowSettings(false)} 
-                  className={`flex-1 py-2 rounded-lg text-xs ${isLight ? 'bg-slate-200' : 'bg-slate-800'} opacity-80 hover:opacity-100`}
+              {/* YouTube Trailer */}
+              {selectedMedia.trailerKey ? (
+                <div className="aspect-video w-full rounded-2xl overflow-hidden border border-slate-800 bg-black shadow-inner">
+                  <iframe
+                    className="w-full h-full"
+                    src={`https://www.youtube.com/embed/${selectedMedia.trailerKey}?autoplay=0`}
+                    title="Trailer"
+                    allowFullScreen
+                  />
+                </div>
+              ) : (
+                <p className="text-xs opacity-50 italic">No trailer video preview available for this title.</p>
+              )}
+
+              <p className="text-xs opacity-80 leading-relaxed font-normal">{selectedMedia.overview || 'No synopsis available.'}</p>
+
+              {modalStatus === 'done' ? (
+                <button
+                  onClick={() => openPlexNative(selectedMedia.title || selectedMedia.name)}
+                  className="w-full py-3.5 text-xs font-bold rounded-2xl bg-emerald-950 text-emerald-400 border border-emerald-800 text-center hover:bg-emerald-900 transition shadow"
                 >
-                  Cancel
+                  ▶ Open in Plex
                 </button>
-                <button 
-                  type="submit" 
-                  className="flex-1 bg-amber-500 text-slate-950 font-bold py-2 rounded-lg text-xs"
+              ) : modalStatus === 'pending' ? (
+                canCancel ? (
+                  <button
+                    onClick={() => handleDismissOrCancel(modalMatch.id)}
+                    className="w-full bg-rose-900/60 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold py-3.5 rounded-2xl text-xs transition shadow"
+                  >
+                    ✕ Cancel Request {currentUser.is_admin && !isUserOwner && '(Admin)'}
+                  </button>
+                ) : (
+                  <button
+                    disabled
+                    className="w-full bg-slate-800 text-slate-500 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed"
+                  >
+                    Already Requested by {modalMatch?.requested_by || 'User'}
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={() => handleRequest(selectedMedia)}
+                  disabled={isCapped}
+                  className={`w-full font-bold py-3.5 rounded-2xl text-xs transition shadow-lg ${
+                    isCapped 
+                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                      : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20'
+                  }`}
                 >
-                  Save Changes
+                  {isCapped ? 'Limit Reached (10 Pending)' : 'Confirm Request'}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal: Account Settings */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <form onSubmit={handleUpdateProfile} className={`${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} border p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl`}>
+            <h3 className="text-sm font-bold">Account Settings</h3>
+
+            <div>
+              <label className="text-xs opacity-60">Registered Email (Locked)</label>
+              <input
+                type="email"
+                disabled
+                value={currentUser.email}
+                className="w-full border border-slate-800 px-3.5 py-2.5 rounded-xl text-xs mt-1 bg-slate-800/40 opacity-60 cursor-not-allowed"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs opacity-60">Display Name</label>
+              <input
+                type="text"
+                required
+                value={tempName}
+                onChange={(e) => setTempName(e.target.value)}
+                className={`w-full border px-3.5 py-2.5 rounded-xl text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs opacity-60">Update Password (optional)</label>
+              <input
+                type="password"
+                placeholder="Leave blank to keep same"
+                value={tempPassword}
+                onChange={(e) => setTempPassword(e.target.value)}
+                className={`w-full border px-3.5 py-2.5 rounded-xl text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs opacity-60">Update Password Hint (optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Favorite sports team"
+                value={tempHint}
+                onChange={(e) => setTempHint(e.target.value)}
+                className={`w-full border px-3.5 py-2.5 rounded-xl text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs opacity-60">Theme Selection</label>
+              <div className="flex gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => setTheme('dark')}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl border transition ${theme === 'dark' ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-md' : 'opacity-60 border-slate-700'}`}
+                >
+                  🌙 Dark
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTheme('light')}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl border transition ${theme === 'light' ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-md' : 'opacity-60 border-slate-300'}`}
+                >
+                  ☀️ Light
                 </button>
               </div>
-            </form>
-          </div>
-        )}
-      </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button 
+                type="button" 
+                onClick={() => setShowSettings(false)} 
+                className={`flex-1 py-2.5 rounded-xl text-xs ${isLight ? 'bg-slate-200' : 'bg-slate-800'} opacity-80 hover:opacity-100 font-semibold`}
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                className="flex-1 bg-amber-500 text-slate-950 font-bold py-2.5 rounded-xl text-xs shadow-md shadow-amber-500/20"
+              >
+                Save Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
