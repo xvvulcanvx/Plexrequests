@@ -457,7 +457,7 @@ export default function Home() {
           onClick={() => setActiveTab('list')}
           className={`flex-1 py-2 rounded-lg transition ${activeTab === 'list' ? 'bg-amber-500 text-slate-950 font-bold shadow' : 'text-slate-400 hover:text-white'}`}
         >
-          {isAdmin ? `All Requests (${userRequests.length})` : `My Requests (${visibleRequests.length})`}
+          My Requests ({visibleRequests.length})
         </button>
         <button
           onClick={() => setActiveTab('admin')}
