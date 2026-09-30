@@ -289,12 +289,16 @@ export default function Home() {
   };
 
   const handleCancelRequest = async (id, title) => {
-    if (!confirm(`Remove request for "${title}"?`)) return;
+    // Optimistically remove from screen immediately
+    setUserRequests(prev => prev.filter(r => r.id !== id));
+    setMatchedDbItems(prev => prev.filter(r => r.id !== id));
+    if (selectedMedia) setSelectedMedia(null);
+
+    // Remove from database
     const { error } = await supabase.from('requests').delete().eq('id', id);
-    if (!error) {
-      await fetchUserRequests();
-      setMatchedDbItems(prev => prev.filter(r => r.id !== id));
-      if (selectedMedia) setSelectedMedia(null);
+    if (error) {
+      console.error('Delete error:', error);
+      fetchUserRequests(); // Roll back if failed
     }
   };
 
@@ -375,9 +379,9 @@ export default function Home() {
     setShowSettings(false);
   };
 
+  // "My Requests" tab only ever shows the logged-in user's own items
   const visibleRequests = userRequests.filter(r => {
-    if (isAdmin) return true;
-    return r.requested_by?.toLowerCase().trim() === userName?.toLowerCase().trim();
+    return cleanString(r.requested_by) === cleanString(userName);
   });
 
   if (!userName) {
