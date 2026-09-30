@@ -577,7 +577,7 @@ export default function Home() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Alfredo, Sarah"
+                  placeholder="Enter your name"
                   value={authName}
                   onChange={(e) => setAuthName(e.target.value)}
                   className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
