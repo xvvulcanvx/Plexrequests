@@ -8,8 +8,7 @@ const TMDB_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || '';
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Maximum pending requests allowed per standard user
-const MAX_ACTIVE_REQUESTS = 10;
+const DEFAULT_MAX_ACTIVE_REQUESTS = 10;
 
 function cleanString(str) {
   if (!str) return '';
@@ -62,9 +61,9 @@ const EXTENDED_GENRES = [
 ];
 
 export default function Home() {
-  // Authentication State
+  // Authentication
   const [currentUser, setCurrentUser] = useState(null);
-  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup' | 'forgot'
+  const [authMode, setAuthMode] = useState('signin');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
@@ -82,6 +81,7 @@ export default function Home() {
 
   // Search & Catalog
   const [search, setSearch] = useState('');
+  const [searchFilter, setSearchFilter] = useState('all'); // 'all' | 'movie' | 'tv'
   const [selectedGenre, setSelectedGenre] = useState('trending');
   const [showExtendedGenres, setShowExtendedGenres] = useState(false);
   const [results, setResults] = useState([]);
@@ -92,17 +92,21 @@ export default function Home() {
 
   // Modals & Feedback
   const [selectedMedia, setSelectedMedia] = useState(null);
+  const [selectedSeasons, setSelectedSeasons] = useState(['All']);
+  const [watchProviders, setWatchProviders] = useState([]);
   const [toastMessage, setToastMessage] = useState('');
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(false);
 
-  // Admin Dashboard State
+  // Admin Superpowers & System Settings
+  const [requestsPaused, setRequestsPaused] = useState(false);
+  const [pinnedHero, setPinnedHero] = useState(null);
   const [discordWebhook, setDiscordWebhook] = useState('');
   const [bannerInput, setBannerInput] = useState('');
   const [bannerToggle, setBannerToggle] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [inspectUser, setInspectUser] = useState(null);
-  const [declineNoteInput, setDeclineNoteInput] = useState({});
+  const [adminNoteInput, setAdminNoteInput] = useState({});
   const [showNoteBox, setShowNoteBox] = useState({});
 
   useEffect(() => {
@@ -136,6 +140,8 @@ export default function Home() {
       setDiscordWebhook(data.discord_webhook_url || '');
       setBannerInput(data.banner_message || '');
       setBannerToggle(data.banner_active || false);
+      setRequestsPaused(data.requests_paused || false);
+      setPinnedHero(data.pinned_hero || null);
     }
   };
 
@@ -158,7 +164,7 @@ export default function Home() {
     if (data) setProfiles(data);
   };
 
-  // Auth: Handle Sign In
+  // Auth Handlers
   const handleSignIn = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -168,11 +174,7 @@ export default function Home() {
     const email = authEmail.trim().toLowerCase();
     const pass = authPassword.trim();
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('email', email)
-      .single();
+    const { data, error } = await supabase.from('profiles').select('*').eq('email', email).single();
 
     if (error || !data) {
       setAuthError('Account not found with this email.');
@@ -191,7 +193,6 @@ export default function Home() {
     setAuthLoading(false);
   };
 
-  // Auth: Handle Sign Up
   const handleSignUp = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -209,12 +210,7 @@ export default function Home() {
       return;
     }
 
-    const { data: existing } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', email)
-      .single();
-
+    const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
     if (existing) {
       setAuthError('An account with this email already exists. Sign In instead.');
       setAuthLoading(false);
@@ -223,13 +219,7 @@ export default function Home() {
 
     const { data: newUser, error } = await supabase
       .from('profiles')
-      .insert([{ 
-        name, 
-        email, 
-        password: pass, 
-        password_hint: hint || null, 
-        is_admin: false 
-      }])
+      .insert([{ name, email, password: pass, password_hint: hint || null, is_admin: false, role: 'standard' }])
       .select()
       .single();
 
@@ -252,27 +242,18 @@ export default function Home() {
 
     const email = authEmail.trim().toLowerCase();
     if (!email) {
-      setAuthError('Enter your email address first.');
+      setAuthError('Enter your email address.');
       setAuthLoading(false);
       return;
     }
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('password_hint')
-      .eq('email', email)
-      .single();
-
+    const { data, error } = await supabase.from('profiles').select('password_hint').eq('email', email).single();
     if (error || !data) {
       setAuthError('No account found for this email.');
-      setAuthLoading(false);
-      return;
-    }
-
-    if (data.password_hint) {
-      setAuthSuccess(`Your password hint: "${data.password_hint}"`);
+    } else if (data.password_hint) {
+      setAuthSuccess(`Password hint: "${data.password_hint}"`);
     } else {
-      setAuthError('No hint was saved for this account. Contact the admin to reset your password.');
+      setAuthError('No hint saved. Please ask the admin to reset your password.');
     }
     setAuthLoading(false);
   };
@@ -314,7 +295,7 @@ export default function Home() {
     loadDiscovery();
   }, [selectedGenre, search]);
 
-  // Search Multi TMDB
+  // Search Multi TMDB with Quick Filter Toggles
   useEffect(() => {
     if (!search.trim()) return;
 
@@ -330,15 +311,20 @@ export default function Home() {
 
         const rawList = [...(res1.results || []), ...(res2.results || []), ...(res3.results || [])];
         const seenIds = new Set();
-        const filtered = rawList
+        let filtered = rawList
           .filter(item => {
             if (!item.poster_path) return false;
             if (item.media_type !== 'movie' && item.media_type !== 'tv') return false;
             if (seenIds.has(item.id)) return false;
             seenIds.add(item.id);
             return true;
-          })
-          .sort((a, b) => (b.popularity || 0) * (b.vote_count || 1) - (a.popularity || 0) * (a.vote_count || 1));
+          });
+
+        if (searchFilter !== 'all') {
+          filtered = filtered.filter(item => item.media_type === searchFilter);
+        }
+
+        filtered.sort((a, b) => (b.popularity || 0) * (b.vote_count || 1) - (a.popularity || 0) * (a.vote_count || 1));
 
         setResults(filtered);
         checkDbMatches(filtered);
@@ -349,7 +335,7 @@ export default function Home() {
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, searchFilter]);
 
   const checkDbMatches = async (items) => {
     if (!items || items.length === 0) return;
@@ -391,37 +377,87 @@ export default function Home() {
     });
   };
 
+  // Open Details Modal with Trailer, Watch Providers & TV Seasons
   const handleOpenDetails = async (item) => {
     const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
     let trailerKey = null;
+    let fullDetails = item;
+    let providers = [];
 
     try {
-      const res = await fetch(`https://api.themoviedb.org/3/${type}/${item.id}/videos?api_key=${TMDB_KEY}`);
-      const data = await res.json();
-      const trailer = (data.results || []).find(v => v.type === 'Trailer' && v.site === 'YouTube');
+      const [videoRes, detailRes, providerRes] = await Promise.all([
+        fetch(`https://api.themoviedb.org/3/${type}/${item.id}/videos?api_key=${TMDB_KEY}`).then(r => r.json()),
+        fetch(`https://api.themoviedb.org/3/${type}/${item.id}?api_key=${TMDB_KEY}`).then(r => r.json()),
+        fetch(`https://api.themoviedb.org/3/${type}/${item.id}/watch/providers?api_key=${TMDB_KEY}`).then(r => r.json())
+      ]);
+
+      const trailer = (videoRes.results || []).find(v => v.type === 'Trailer' && v.site === 'YouTube');
       if (trailer) trailerKey = trailer.key;
+
+      if (detailRes) fullDetails = { ...item, ...detailRes };
+      if (providerRes?.results?.US?.flatrate) providers = providerRes.results.US.flatrate;
     } catch (e) {
-      console.error('Trailer error:', e);
+      console.error('Modal data error:', e);
     }
 
-    setSelectedMedia({ ...item, trailerKey, media_type: type });
+    setWatchProviders(providers);
+    setSelectedSeasons(['All']);
+    setSelectedMedia({ ...fullDetails, trailerKey, media_type: type });
   };
 
+  // Upvoting (+1) Logic
+  const handleUpvote = async (requestId, currentUpvotes = []) => {
+    if (!currentUser) return;
+    const userEmail = currentUser.email.toLowerCase();
+    const upvotedArray = currentUpvotes || [];
+
+    if (upvotedArray.includes(userEmail)) {
+      alert("You already upvoted this request!");
+      return;
+    }
+
+    const updated = [...upvotedArray, userEmail];
+    const { error } = await supabase.from('requests').update({ upvoted_by: updated }).eq('id', requestId);
+
+    if (!error) {
+      setToastMessage("🔥 Added your vote! Priority boosted.");
+      setTimeout(() => setToastMessage(''), 3000);
+      await fetchUserRequests();
+      setMatchedDbItems(prev => prev.map(r => r.id === requestId ? { ...r, upvoted_by: updated } : r));
+    }
+  };
+
+  // Request Submission
   const handleRequest = async (item) => {
     if (!currentUser) return;
-    const title = item.title || item.name;
-    const mediaType = item.media_type || (item.first_air_date ? 'tv' : 'movie');
-    const year = cleanYear(item.release_date || item.first_air_date || '');
-    const tmdbId = String(item.id);
 
+    // Server Maintenance / Pause Check
+    if (requestsPaused && !currentUser.is_admin) {
+      alert("⚠️ Requesting is temporarily paused for server maintenance. Please check back later!");
+      return;
+    }
+
+    // Role: Movies Only Check
+    const mediaType = item.media_type || (item.first_air_date ? 'tv' : 'movie');
+    if (currentUser.role === 'movies_only' && mediaType === 'tv' && !currentUser.is_admin) {
+      alert("Your account is set to Movies Only. TV Show requests are disabled.");
+      return;
+    }
+
+    // Role: VIP vs Standard Queue Cap Check
     const userPendingCount = userRequests.filter(
       r => r.user_email?.toLowerCase() === currentUser.email?.toLowerCase() && r.status === 'pending'
     ).length;
 
-    if (!currentUser.is_admin && userPendingCount >= MAX_ACTIVE_REQUESTS) {
-      alert(`Request limit reached! You already have ${MAX_ACTIVE_REQUESTS} active pending requests.`);
+    const isVip = currentUser.role === 'vip' || currentUser.is_admin;
+    if (!isVip && userPendingCount >= DEFAULT_MAX_ACTIVE_REQUESTS) {
+      alert(`Request limit reached! You already have ${DEFAULT_MAX_ACTIVE_REQUESTS} active pending requests.`);
       return;
     }
+
+    const title = item.title || item.name;
+    const year = cleanYear(item.release_date || item.first_air_date || '');
+    const tmdbId = String(item.id);
 
     const existing = findDbMatch(item);
     if (existing && existing.status === 'done') {
@@ -433,6 +469,10 @@ export default function Home() {
       return;
     }
 
+    const seasonsText = mediaType === 'tv' ? selectedSeasons.join(', ') : 'N/A';
+    const seasonCount = item.number_of_seasons || 1;
+    const episodeCount = item.number_of_episodes || 0;
+
     const { data: newRow, error } = await supabase.from('requests').insert([{
       title,
       media_type: mediaType,
@@ -441,7 +481,11 @@ export default function Home() {
       tmdb_id: tmdbId,
       requested_by: currentUser.name,
       user_email: currentUser.email,
-      status: 'pending'
+      status: 'pending',
+      seasons_requested: seasonsText,
+      season_count: seasonCount,
+      episode_count: episodeCount,
+      upvoted_by: [currentUser.email.toLowerCase()]
     }]).select().single();
 
     if (error) {
@@ -457,7 +501,7 @@ export default function Home() {
           body: JSON.stringify({
             embeds: [{
               title: `🎬 New Plex Request: ${title} (${year})`,
-              description: `**Requested by:** ${currentUser.name}\n**Email:** ${currentUser.email}\n**Type:** ${mediaType.toUpperCase()}`,
+              description: `**Requested by:** ${currentUser.name}\n**Email:** ${currentUser.email}\n**Type:** ${mediaType.toUpperCase()}${mediaType === 'tv' ? `\n**Seasons:** ${seasonsText}` : ''}`,
               thumbnail: { url: `https://image.tmdb.org/t/p/w200${item.poster_path}` },
               color: 16098851
             }]
@@ -498,6 +542,70 @@ export default function Home() {
     }
   };
 
+  // Admin Superpowers: Billboard Pinning
+  const handlePinBillboard = async (media) => {
+    const payload = media ? {
+      title: media.title || media.name,
+      backdrop_path: media.backdrop_path,
+      poster_path: media.poster_path,
+      overview: media.overview,
+      vote_average: media.vote_average,
+      year: cleanYear(media.release_date || media.first_air_date),
+      id: media.id,
+      media_type: media.media_type
+    } : null;
+
+    const { error } = await supabase.from('site_settings').upsert({
+      id: 'global',
+      pinned_hero: payload
+    });
+
+    if (!error) {
+      setPinnedHero(payload);
+      alert(payload ? 'Pinned to billboard!' : 'Unpinned billboard. Reverting to daily trending.');
+    }
+  };
+
+  // Admin Superpowers: Freeze Requests Switch
+  const handleToggleFreeze = async () => {
+    const next = !requestsPaused;
+    const { error } = await supabase.from('site_settings').upsert({
+      id: 'global',
+      requests_paused: next
+    });
+
+    if (!error) {
+      setRequestsPaused(next);
+      alert(next ? 'Server requests PAUSED for users.' : 'Server requests UNPAUSED.');
+    }
+  };
+
+  // Admin User Directory Controls
+  const handleAdminChangeUserRole = async (profileId, role) => {
+    await supabase.from('profiles').update({ role }).eq('id', profileId);
+    fetchProfiles();
+  };
+
+  const handleAdminResetPassword = async (profileId, userEmail) => {
+    const newPass = prompt(`Enter new temporary password for ${userEmail}:`);
+    if (!newPass || !newPass.trim()) return;
+
+    const { error } = await supabase.from('profiles').update({ password: newPass.trim() }).eq('id', profileId);
+    if (!error) {
+      alert(`Password for ${userEmail} reset to: "${newPass.trim()}"`);
+      fetchProfiles();
+    }
+  };
+
+  const handleAdminDeleteUser = async (profileId, profileEmail) => {
+    if (!confirm(`Delete user "${profileEmail}" and all their requests?`)) return;
+    await supabase.from('profiles').delete().eq('id', profileId);
+    await supabase.from('requests').delete().eq('user_email', profileEmail);
+    fetchProfiles();
+    fetchUserRequests();
+    if (inspectUser?.email === profileEmail) setInspectUser(null);
+  };
+
   const handlePruneOldRequests = async () => {
     if (!confirm('Permanently delete all Done and Declined requests older than 30 days?')) return;
     const thirtyDaysAgo = new Date();
@@ -512,74 +620,7 @@ export default function Home() {
     if (!error) {
       alert('Pruned resolved requests older than 30 days!');
       fetchUserRequests();
-    } else {
-      alert(`Error pruning: ${error.message}`);
     }
-  };
-
-  const handleUpdateProfile = async (e) => {
-    e.preventDefault();
-    if (!tempName.trim()) return;
-
-    const updatedName = tempName.trim();
-    const updatePayload = { name: updatedName };
-    if (tempPassword.trim()) updatePayload.password = tempPassword.trim();
-    if (tempHint.trim()) updatePayload.password_hint = tempHint.trim();
-
-    const { error } = await supabase
-      .from('profiles')
-      .update(updatePayload)
-      .eq('email', currentUser.email);
-
-    if (!error) {
-      await supabase
-        .from('requests')
-        .update({ requested_by: updatedName })
-        .eq('user_email', currentUser.email);
-
-      const updatedUser = { ...currentUser, ...updatePayload };
-      setCurrentUser(updatedUser);
-      localStorage.setItem('plex_user_session', JSON.stringify(updatedUser));
-      localStorage.setItem('plex_theme', theme);
-      setShowSettings(false);
-      fetchUserRequests();
-      alert('Profile updated successfully!');
-    }
-  };
-
-  const handleAdminRenameUser = async (profileId, oldName, userEmail) => {
-    const newName = prompt('Enter new display name for user:', oldName);
-    if (!newName || newName.trim() === oldName) return;
-
-    const trimmed = newName.trim();
-    await supabase.from('profiles').update({ name: trimmed }).eq('id', profileId);
-    await supabase.from('requests').update({ requested_by: trimmed }).eq('user_email', userEmail);
-    fetchProfiles();
-    fetchUserRequests();
-  };
-
-  const handleAdminResetPassword = async (profileId, userEmail) => {
-    const newPass = prompt(`Enter new temporary password for ${userEmail}:`);
-    if (!newPass || !newPass.trim()) return;
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ password: newPass.trim() })
-      .eq('id', profileId);
-
-    if (!error) {
-      alert(`Password for ${userEmail} reset to: "${newPass.trim()}"`);
-      fetchProfiles();
-    }
-  };
-
-  const handleAdminDeleteUser = async (profileId, profileEmail) => {
-    if (!confirm(`Delete user "${profileEmail}" and all their requests?`)) return;
-    await supabase.from('profiles').delete().eq('id', profileId);
-    await supabase.from('requests').delete().eq('user_email', profileEmail);
-    fetchProfiles();
-    fetchUserRequests();
-    if (inspectUser?.email === profileEmail) setInspectUser(null);
   };
 
   const handleCopyAllEmails = () => {
@@ -607,6 +648,29 @@ export default function Home() {
     }
   };
 
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    if (!tempName.trim()) return;
+
+    const updatedName = tempName.trim();
+    const updatePayload = { name: updatedName };
+    if (tempPassword.trim()) updatePayload.password = tempPassword.trim();
+    if (tempHint.trim()) updatePayload.password_hint = tempHint.trim();
+
+    const { error } = await supabase.from('profiles').update(updatePayload).eq('email', currentUser.email);
+
+    if (!error) {
+      await supabase.from('requests').update({ requested_by: updatedName }).eq('user_email', currentUser.email);
+      const updatedUser = { ...currentUser, ...updatePayload };
+      setCurrentUser(updatedUser);
+      localStorage.setItem('plex_user_session', JSON.stringify(updatedUser));
+      localStorage.setItem('plex_theme', theme);
+      setShowSettings(false);
+      fetchUserRequests();
+      alert('Profile updated successfully!');
+    }
+  };
+
   const openPlexNative = (title) => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(title);
@@ -621,11 +685,27 @@ export default function Home() {
   const isLight = theme === 'light';
   const visibleRequests = userRequests.filter(r => r.user_email?.toLowerCase() === currentUser?.email?.toLowerCase());
   const activePendingCount = visibleRequests.filter(r => r.status === 'pending').length;
+  const isVip = currentUser?.role === 'vip' || currentUser?.is_admin;
+  const isCapped = !isVip && activePendingCount >= DEFAULT_MAX_ACTIVE_REQUESTS;
 
-  // #1 Trending Hero Title
-  const heroItem = (!search.trim() && selectedGenre === 'trending' && results.length > 0 && results[0]?.backdrop_path) 
-    ? results[0] 
-    : null;
+  // Active Hero Billboard (Pinned hero overrides daily trending #1)
+  const heroItem = pinnedHero || ((!search.trim() && selectedGenre === 'trending' && results.length > 0 && results[0]?.backdrop_path) ? results[0] : null);
+
+  // Recently Added to Plex shelf (up to 10 latest 'done' requests)
+  const recentlyAdded = userRequests.filter(r => r.status === 'done').slice(0, 10);
+
+  // Leaderboard Calculation
+  const requesterCounts = {};
+  userRequests.forEach(r => {
+    const key = r.requested_by || 'Anonymous';
+    requesterCounts[key] = (requesterCounts[key] || 0) + 1;
+  });
+  const sortedRequesters = Object.entries(requesterCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+
+  // Sort Admin Requests Queue by Upvotes
+  const adminSortedRequests = [...userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress')].sort(
+    (a, b) => (b.upvoted_by?.length || 1) - (a.upvoted_by?.length || 1)
+  );
 
   // ==========================================
   // VIEW: AUTHENTICATION / SIGN IN SCREEN
@@ -728,7 +808,7 @@ export default function Home() {
                   <label className="text-xs font-semibold">Password Hint (Optional)</label>
                   <input
                     type="text"
-                    placeholder="e.g. Favorite sports team"
+                    placeholder="e.g. Favorite soccer team"
                     value={authHint}
                     onChange={(e) => setAuthHint(e.target.value)}
                     className={`w-full mt-1 ${isLight ? 'bg-slate-50 border-slate-300 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'} border px-3 py-2.5 rounded-xl text-xs outline-none focus:border-amber-500`}
@@ -807,6 +887,17 @@ export default function Home() {
           </div>
         )}
 
+        {/* Global Server Maintenance / Pause Notice */}
+        {requestsPaused && (
+          <div className="bg-rose-950/80 border border-rose-800 text-rose-300 p-3.5 rounded-2xl text-xs flex items-center gap-2.5 shadow-lg">
+            <span className="text-lg">⏸️</span>
+            <div>
+              <p className="font-bold">Requests Temporarily Paused</p>
+              <p className="opacity-80 text-[11px]">Server storage maintenance in progress. You can browse and check status, but new requests are on hold.</p>
+            </div>
+          </div>
+        )}
+
         {bannerActive && bannerMessage && (
           <aside aria-label="Announcement" className="bg-amber-500/10 border border-amber-500/30 text-amber-500 p-3 rounded-2xl text-xs flex items-center gap-2 shadow-inner">
             <span className="text-base" aria-hidden="true">📢</span>
@@ -814,7 +905,7 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Minimalist Header */}
+        {/* Minimalist Top Bar */}
         <header className="flex justify-between items-center py-2">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shadow-lg shadow-amber-500/20">
@@ -825,7 +916,15 @@ export default function Home() {
                 {currentUser.name}
               </h1>
               <p className="text-[11px] opacity-60">
-                {currentUser.is_admin ? <span className="text-amber-500 font-bold">Admin Privileges</span> : 'Server Requester'}
+                {currentUser.is_admin ? (
+                  <span className="text-amber-500 font-bold">Admin Privileges</span>
+                ) : currentUser.role === 'vip' ? (
+                  <span className="text-purple-400 font-bold">VIP Unlimited</span>
+                ) : currentUser.role === 'movies_only' ? (
+                  <span className="text-sky-400 font-bold">Movies Only</span>
+                ) : (
+                  'Server Requester'
+                )}
               </p>
             </div>
           </div>
@@ -856,7 +955,7 @@ export default function Home() {
         {/* Tab 1: Search & Discovery */}
         {activeTab === 'search' && (
           <section className="space-y-5">
-            {/* Cinematic Hero Billboard (Featured #1 Trending Title) */}
+            {/* Cinematic Hero Billboard */}
             {heroItem && (
               <div 
                 onClick={() => handleOpenDetails(heroItem)}
@@ -872,7 +971,7 @@ export default function Home() {
                 <div className="absolute bottom-0 left-0 right-0 p-5 sm:p-7 flex flex-col justify-end gap-1.5">
                   <div className="flex items-center gap-2">
                     <span className="bg-amber-500 text-slate-950 font-black text-[10px] uppercase px-2 py-0.5 rounded-full tracking-wider">
-                      #1 Featured
+                      {pinnedHero ? '📌 Featured by Admin' : '#1 Featured'}
                     </span>
                     <span className="text-xs font-semibold text-white/90">
                       ★ {heroItem.vote_average?.toFixed(1)} • {cleanYear(heroItem.release_date || heroItem.first_air_date)}
@@ -894,35 +993,105 @@ export default function Home() {
                     >
                       ▶ Details & Trailer
                     </button>
+                    {currentUser.is_admin && pinnedHero && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handlePinBillboard(null); }}
+                        className="bg-rose-900/60 text-rose-300 font-bold text-xs px-3 py-2 rounded-xl border border-rose-800 transition"
+                      >
+                        Unpin Billboard
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Search Bar */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search movies & TV shows..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className={`w-full ${isLight ? 'bg-white border-slate-300 placeholder-slate-400' : 'bg-slate-900/90 border-slate-800 placeholder-slate-500'} border focus:border-amber-500 px-5 py-3.5 rounded-2xl outline-none text-sm shadow-inner transition`}
-              />
-              {loading && (
-                <span className="absolute right-4 top-3.5 text-xs text-amber-500 animate-pulse font-medium">
-                  Searching...
-                </span>
+            {/* "Recently Added to Plex" Carousel */}
+            {!search.trim() && recentlyAdded.length > 0 && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                    <span>✨ Recently Added to Plex</span>
+                  </h3>
+                  <span className="text-[11px] opacity-50">Ready to Stream</span>
+                </div>
+
+                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
+                  {recentlyAdded.map(item => (
+                    <div 
+                      key={item.id} 
+                      onClick={() => openPlexNative(item.title)}
+                      className="w-24 sm:w-28 shrink-0 cursor-pointer group"
+                    >
+                      <div className="aspect-[2/3] rounded-2xl overflow-hidden border border-emerald-500/30 shadow-md group-hover:border-emerald-400 transition bg-slate-900 relative">
+                        {item.poster_path ? (
+                          <img src={`https://image.tmdb.org/t/p/w200${item.poster_path}`} alt="" className="w-full h-full object-cover group-hover:scale-105 transition" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">MEDIA</div>
+                        )}
+                        <span className="absolute bottom-1 right-1 bg-emerald-500 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-md">
+                          ▶ Plex
+                        </span>
+                      </div>
+                      <p className="text-[11px] font-semibold truncate mt-1 text-center group-hover:text-emerald-400 transition">{item.title}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search Bar with Autocomplete & Filter Toggles */}
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search movies & TV shows..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={`w-full ${isLight ? 'bg-white border-slate-300 placeholder-slate-400' : 'bg-slate-900/90 border-slate-800 placeholder-slate-500'} border focus:border-amber-500 pl-4 pr-10 py-3.5 rounded-2xl outline-none text-sm shadow-inner transition`}
+                />
+                {search.trim() ? (
+                  <button 
+                    onClick={() => setSearch('')}
+                    className="absolute right-3.5 top-3.5 text-xs opacity-50 hover:opacity-100 p-1"
+                  >
+                    ✕
+                  </button>
+                ) : loading ? (
+                  <span className="absolute right-4 top-3.5 text-xs text-amber-500 animate-pulse font-medium">
+                    Searching...
+                  </span>
+                ) : null}
+              </div>
+
+              {/* Quick Filter Pills (All / Movies Only / TV Only) */}
+              {search.trim() && (
+                <div className="flex gap-2">
+                  {['all', 'movie', 'tv'].map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => setSearchFilter(type)}
+                      className={`text-xs px-3 py-1 rounded-xl border transition ${
+                        searchFilter === type 
+                          ? 'bg-amber-500 border-amber-500 text-slate-950 font-bold' 
+                          : `${isLight ? 'bg-white border-slate-300' : 'bg-slate-900 border-slate-800'} opacity-70`
+                      }`}
+                    >
+                      {type === 'all' ? 'All Results' : type === 'movie' ? 'Movies Only' : 'TV Shows Only'}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
 
             {/* Request Cap Notice */}
-            {!currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS && (
+            {!isVip && activePendingCount >= DEFAULT_MAX_ACTIVE_REQUESTS && (
               <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-400 flex items-center gap-2">
-                <span>⚠️ Queue full ({activePendingCount}/{MAX_ACTIVE_REQUESTS} pending). Requesting is paused until items are processed.</span>
+                <span>⚠️ Queue full ({activePendingCount}/{DEFAULT_MAX_ACTIVE_REQUESTS} pending). Requesting is paused until items are processed.</span>
               </div>
             )}
 
-            {/* Horizontal Genre Chips */}
+            {/* Genre Chips */}
             {!search.trim() && (
               <div className="space-y-2">
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-semibold">
@@ -968,10 +1137,9 @@ export default function Home() {
               </div>
             )}
 
-            {/* Media Grid with Shimmer Skeletons & Edge-to-Edge Cards */}
+            {/* Media Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
               {loading ? (
-                // Shimmer Skeleton Placeholders
                 Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="aspect-[2/3] rounded-3xl bg-slate-800/40 border border-slate-800/60 animate-pulse flex flex-col justify-end p-4 space-y-2">
                     <div className="h-4 bg-slate-700/60 rounded-lg w-3/4"></div>
@@ -989,7 +1157,8 @@ export default function Home() {
                   const status = matchingRequest?.status?.toLowerCase().trim();
                   const isUserOwner = matchingRequest?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
                   const canCancel = isUserOwner || currentUser.is_admin;
-                  const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
+                  const upvoteCount = matchingRequest?.upvoted_by?.length || 1;
+                  const hasUpvoted = matchingRequest?.upvoted_by?.includes(currentUser.email.toLowerCase());
 
                   return (
                     <div 
@@ -997,17 +1166,14 @@ export default function Home() {
                       className="group relative aspect-[2/3] rounded-3xl overflow-hidden border border-white/10 hover:border-amber-500/50 hover:shadow-[0_0_25px_rgba(245,158,11,0.2)] transition-all duration-300 flex flex-col justify-end bg-slate-950 shadow-lg cursor-pointer"
                       onClick={() => handleOpenDetails(item)}
                     >
-                      {/* Edge-to-Edge Poster Image */}
                       <img 
                         src={`https://image.tmdb.org/t/p/w500${item.poster_path}`} 
                         alt={title} 
                         className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition duration-500 ease-out" 
                       />
 
-                      {/* Deep Bottom Gradient */}
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/70 to-transparent" />
 
-                      {/* Top Badges */}
                       <div className="absolute top-2.5 left-2.5 right-2.5 flex justify-between items-start pointer-events-none">
                         {theatricalBadge ? (
                           <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 backdrop-blur shadow">
@@ -1020,7 +1186,6 @@ export default function Home() {
                         </span>
                       </div>
 
-                      {/* Bottom Info & Action Buttons */}
                       <div className="relative p-3 space-y-2 z-10">
                         <div>
                           <p className="font-bold text-xs line-clamp-1 text-white drop-shadow">{title}</p>
@@ -1048,21 +1213,32 @@ export default function Home() {
                                 ✕ Cancel {currentUser.is_admin && !isUserOwner && '(Admin)'}
                               </button>
                             ) : (
-                              <div className="w-full py-2 text-[11px] font-bold rounded-xl bg-slate-900/80 border border-white/10 text-slate-400 text-center truncate">
-                                Requested
-                              </div>
+                              // Upvoting (+1) Button for other users
+                              <button
+                                onClick={() => handleUpvote(matchingRequest.id, matchingRequest.upvoted_by)}
+                                disabled={hasUpvoted}
+                                className={`w-full py-2 text-[11px] font-bold rounded-xl border transition shadow flex items-center justify-center gap-1 ${
+                                  hasUpvoted 
+                                    ? 'bg-amber-950/70 text-amber-300 border-amber-800' 
+                                    : 'bg-slate-900/90 hover:bg-amber-500 hover:text-slate-950 border-white/20 text-white'
+                                }`}
+                              >
+                                {hasUpvoted ? `✓ Upvoted (${upvoteCount})` : `🔥 +1 Want This (${upvoteCount})`}
+                              </button>
                             )
                           ) : (
                             <button
                               onClick={() => handleRequest(item)}
-                              disabled={isCapped}
+                              disabled={isCapped || requestsPaused}
                               className={`w-full py-2 text-[11px] font-bold rounded-xl transition shadow-md ${
-                                isCapped 
-                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                                  : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
+                                requestsPaused
+                                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                  : isCapped 
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black'
                               }`}
                             >
-                              {isCapped ? 'Limit Reached' : 'Request'}
+                              {requestsPaused ? 'Paused' : isCapped ? 'Limit Reached' : 'Request'}
                             </button>
                           )}
                         </div>
@@ -1092,9 +1268,9 @@ export default function Home() {
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-xs truncate">{r.title} {r.year && <span className="opacity-60 font-normal">({r.year})</span>}</p>
-                    <p className="text-[11px] opacity-60">Status: {r.status.toUpperCase()}</p>
+                    <p className="text-[11px] opacity-60">Status: {r.status.toUpperCase()} {r.seasons_requested && r.seasons_requested !== 'N/A' && `• ${r.seasons_requested}`}</p>
                     {r.admin_note && (
-                      <p className="text-[10px] text-rose-400 mt-0.5 italic">Note: {r.admin_note}</p>
+                      <p className="text-[10px] text-amber-400 mt-0.5 italic">Admin Note: {r.admin_note}</p>
                     )}
                   </div>
 
@@ -1128,13 +1304,58 @@ export default function Home() {
           <section className="space-y-6">
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold text-emerald-500">● Master Admin Active</span>
-              <button 
-                onClick={handlePruneOldRequests}
-                className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 font-semibold"
-                title="Deletes resolved requests older than 30 days"
-              >
-                🧹 Prune Resolved (&gt;30d)
-              </button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={handleToggleFreeze}
+                  className={`text-[11px] px-3 py-1.5 rounded-xl border font-bold transition ${
+                    requestsPaused ? 'bg-rose-950 text-rose-300 border-rose-800' : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  {requestsPaused ? '▶ Unfreeze Requests' : '⏸️ Freeze Requests'}
+                </button>
+                <button 
+                  onClick={handlePruneOldRequests}
+                  className="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-xl border border-slate-700 font-semibold"
+                >
+                  🧹 Prune (&gt;30d)
+                </button>
+              </div>
+            </div>
+
+            {/* Leaderboard & Storage Insights */}
+            <div className={`border p-4 rounded-2xl space-y-2.5 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500">Server Activity Leaderboard</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/50 text-center">
+                  <p className="text-lg font-black text-amber-500">{userRequests.length}</p>
+                  <p className="text-[10px] opacity-60">Total Requests</p>
+                </div>
+                <div className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/50 text-center">
+                  <p className="text-lg font-black text-emerald-400">{userRequests.filter(r => r.status === 'done').length}</p>
+                  <p className="text-[10px] opacity-60">Approved / Done</p>
+                </div>
+                <div className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/50 text-center">
+                  <p className="text-lg font-black text-blue-400">{userRequests.filter(r => r.status === 'pending').length}</p>
+                  <p className="text-[10px] opacity-60">Pending Queue</p>
+                </div>
+                <div className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/50 text-center">
+                  <p className="text-lg font-black text-purple-400">{profiles.length}</p>
+                  <p className="text-[10px] opacity-60">Users Registered</p>
+                </div>
+              </div>
+
+              {sortedRequesters.length > 0 && (
+                <div className="pt-2 border-t border-slate-800/60">
+                  <p className="text-[11px] font-bold opacity-70 mb-1">Top Requesters:</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {sortedRequesters.map(([name, count], i) => (
+                      <span key={name} className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-lg">
+                        #{i + 1} {name}: <strong>{count}</strong>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Broadcast Announcement */}
@@ -1183,7 +1404,7 @@ export default function Home() {
               </button>
             </div>
 
-            {/* User Directory */}
+            {/* User Directory with VIP & Permissions Dropdown */}
             <div className={`border p-4 rounded-2xl space-y-3 ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
               <div className="flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-amber-500">Registered Users ({profiles.length})</h3>
@@ -1206,24 +1427,32 @@ export default function Home() {
                       <p className="text-[10px] opacity-60 truncate">{p.email}</p>
                       {p.password_hint && <p className="text-[9px] text-amber-400/80 italic">Hint: {p.password_hint}</p>}
                     </div>
-                    <div className="flex gap-2">
+
+                    <div className="flex items-center gap-1.5">
+                      {/* Permission Role Selector */}
+                      {!p.is_admin && (
+                        <select
+                          value={p.role || 'standard'}
+                          onChange={(e) => handleAdminChangeUserRole(p.id, e.target.value)}
+                          className="bg-slate-900 border border-slate-700 text-white text-[10px] rounded-lg px-1.5 py-1 outline-none"
+                        >
+                          <option value="standard">Standard (10)</option>
+                          <option value="vip">VIP (Unlimited)</option>
+                          <option value="movies_only">Movies Only</option>
+                        </select>
+                      )}
+
                       <button 
                         onClick={() => handleAdminResetPassword(p.id, p.email)} 
-                        className="text-[10px] text-amber-400 hover:underline"
+                        className="text-[10px] text-amber-400 hover:underline px-1"
                         title="Reset Password"
                       >
-                        Reset Pass
-                      </button>
-                      <button 
-                        onClick={() => handleAdminRenameUser(p.id, p.name, p.email)} 
-                        className="text-[10px] opacity-60 hover:opacity-100"
-                      >
-                        Rename
+                        Reset
                       </button>
                       {!p.is_admin && (
                         <button 
                           onClick={() => handleAdminDeleteUser(p.id, p.email)} 
-                          className="text-[10px] text-rose-400 hover:text-rose-300"
+                          className="text-[10px] text-rose-400 hover:text-rose-300 px-1"
                         >
                           Delete
                         </button>
@@ -1234,76 +1463,65 @@ export default function Home() {
               </div>
             </div>
 
-            {/* User History Inspector Drawer */}
-            {inspectUser && (
-              <div className={`p-4 rounded-2xl border space-y-3 ${isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-950 border-slate-800'}`}>
-                <div className="flex justify-between items-center">
-                  <h4 className="font-bold text-xs">Request History for: {inspectUser.name} ({inspectUser.email})</h4>
-                  <button onClick={() => setInspectUser(null)} className="text-xs opacity-60">✕ Close</button>
-                </div>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {userRequests.filter(r => r.user_email?.toLowerCase() === inspectUser.email?.toLowerCase()).length === 0 ? (
-                    <p className="text-[11px] opacity-60">No requests submitted by this user.</p>
-                  ) : (
-                    userRequests
-                      .filter(r => r.user_email?.toLowerCase() === inspectUser.email?.toLowerCase())
-                      .map(r => (
-                        <div key={r.id} className="text-[11px] flex justify-between border-b pb-1 border-slate-700/40">
-                          <span className="truncate flex-1">{r.title} ({r.year})</span>
-                          <span className={`font-bold ml-2 ${r.status === 'done' ? 'text-emerald-400' : r.status === 'declined' ? 'text-rose-400' : 'text-amber-400'}`}>
-                            {r.status}
-                          </span>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Active Requests Queue */}
+            {/* Active Requests Queue (with Episode warnings & Upvotes) */}
             <div className="space-y-3">
-              <h3 className="font-bold text-xs opacity-75">Active Requests Queue:</h3>
+              <h3 className="font-bold text-xs opacity-75">Active Requests Queue (Ranked by Demand):</h3>
 
-              {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').map((r) => {
+              {adminSortedRequests.map((r) => {
                 const isTv = (r.media_type || '').toLowerCase() === 'tv';
+                const upvoteCount = r.upvoted_by?.length || 1;
 
                 return (
-                  <div key={r.id} className={`border p-3 rounded-2xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
+                  <div key={r.id} className={`border p-3.5 rounded-2xl flex gap-3 items-center ${isLight ? 'bg-white border-slate-300' : 'bg-slate-900/80 border-slate-800'}`}>
                     <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" className="w-12 h-16 rounded-xl object-cover shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-bold text-xs truncate">{r.title} ({r.year})</p>
                         
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border uppercase tracking-wider ${
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${
                           isTv 
                             ? 'bg-purple-950 text-purple-300 border-purple-800' 
                             : 'bg-sky-950 text-sky-300 border-sky-800'
                         }`}>
                           {isTv ? '📺 TV (Sonarr)' : '🎬 Movie (Radarr)'}
                         </span>
+
+                        {upvoteCount > 1 && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">
+                            🔥 {upvoteCount} Waiting
+                          </span>
+                        )}
                       </div>
+
+                      {/* TV Size & Season Details Warning */}
+                      {isTv && (
+                        <p className="text-[10px] text-purple-300 font-semibold mt-0.5">
+                          {r.season_count || 1} Seasons • {r.episode_count || 'N/A'} Episodes • Requested: {r.seasons_requested || 'All'}
+                        </p>
+                      )}
 
                       <p className="text-[11px] text-amber-500 font-semibold mt-0.5">Requested by: {r.requested_by}</p>
                       {r.user_email && <p className="text-[10px] opacity-60">{r.user_email}</p>}
                       {r.status === 'in_progress' && <span className="text-[10px] text-blue-400 font-semibold">⚡ Downloading...</span>}
 
+                      {/* Universal Note Input for Approval or Decline */}
                       {showNoteBox[r.id] && (
                         <div className="mt-2 flex gap-1">
                           <input
                             type="text"
-                            placeholder="Reason (optional)"
-                            value={declineNoteInput[r.id] || ''}
-                            onChange={(e) => setDeclineNoteInput({ ...declineNoteInput, [r.id]: e.target.value })}
+                            placeholder="Add approval or decline note"
+                            value={adminNoteInput[r.id] || ''}
+                            onChange={(e) => setAdminNoteInput({ ...adminNoteInput, [r.id]: e.target.value })}
                             className={`border px-2.5 py-1 text-[10px] rounded-lg flex-1 outline-none ${isLight ? 'bg-slate-100 border-slate-300' : 'bg-slate-950 border-slate-700'}`}
                           />
                           <button
                             onClick={() => {
-                              updateStatus(r.id, 'declined', declineNoteInput[r.id] || '');
+                              updateStatus(r.id, r.status, adminNoteInput[r.id] || '');
                               setShowNoteBox({ ...showNoteBox, [r.id]: false });
                             }}
-                            className="bg-rose-800 text-white font-bold text-[10px] px-2.5 rounded-lg"
+                            className="bg-amber-500 text-slate-950 font-bold text-[10px] px-2.5 rounded-lg"
                           >
-                            Confirm
+                            Save Note
                           </button>
                         </div>
                       )}
@@ -1311,21 +1529,21 @@ export default function Home() {
 
                     <div className="flex flex-col gap-1 shrink-0">
                       <button
-                        onClick={() => updateStatus(r.id, 'done')}
+                        onClick={() => updateStatus(r.id, 'done', adminNoteInput[r.id] || '')}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
                       >
                         ✓ Done
                       </button>
                       {r.status !== 'in_progress' && (
                         <button
-                          onClick={() => updateStatus(r.id, 'in_progress')}
+                          onClick={() => updateStatus(r.id, 'in_progress', adminNoteInput[r.id] || '')}
                           className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg"
                         >
                           ⚡ In Progress
                         </button>
                       )}
                       <button
-                        onClick={() => updateStatus(r.id, 'declined')}
+                        onClick={() => updateStatus(r.id, 'declined', adminNoteInput[r.id] || '')}
                         className="bg-rose-900/70 hover:bg-rose-800 text-rose-300 font-bold text-[10px] px-3 py-1.5 rounded-lg"
                       >
                         ✕ Decline
@@ -1347,7 +1565,7 @@ export default function Home() {
                 );
               })}
 
-              {userRequests.filter(r => r.status === 'pending' || r.status === 'in_progress').length === 0 && (
+              {adminSortedRequests.length === 0 && (
                 <p className="opacity-60 text-center py-8 text-xs">All requests have been handled!</p>
               )}
             </div>
@@ -1355,7 +1573,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* Floating iOS-Style Frosted Bottom Navigation Dock */}
+      {/* Floating Bottom Navigation Dock */}
       <nav 
         aria-label="Main Navigation" 
         className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-sm backdrop-blur-xl p-1.5 rounded-3xl border shadow-2xl flex items-center justify-between transition-all duration-300 ${
@@ -1412,14 +1630,17 @@ export default function Home() {
         )}
       </nav>
 
-      {/* Rich Backdrop Details & Trailer Modal */}
+      {/* Rich Details Modal */}
       {selectedMedia && (() => {
         const modalMatch = findDbMatch(selectedMedia);
         const modalStatus = modalMatch?.status?.toLowerCase().trim();
         const isUserOwner = modalMatch?.user_email?.toLowerCase() === currentUser.email?.toLowerCase();
         const canCancel = isUserOwner || currentUser.is_admin;
         const theatricalStatus = getTheatricalStatus(selectedMedia.release_date, selectedMedia.media_type);
-        const isCapped = !currentUser.is_admin && activePendingCount >= MAX_ACTIVE_REQUESTS;
+        const isTv = selectedMedia.media_type === 'tv';
+        const seasonCount = selectedMedia.number_of_seasons || 1;
+        const upvoteCount = modalMatch?.upvoted_by?.length || 1;
+        const hasUpvoted = modalMatch?.upvoted_by?.includes(currentUser.email.toLowerCase());
 
         return (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
@@ -1433,21 +1654,39 @@ export default function Home() {
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30" />
-                  <button 
-                    onClick={() => setSelectedMedia(null)} 
-                    className="absolute top-4 right-4 bg-black/60 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur transition"
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
+                  <div className="absolute top-4 right-4 flex gap-2">
+                    {currentUser.is_admin && (
+                      <button
+                        onClick={() => handlePinBillboard(selectedMedia)}
+                        className="bg-black/60 hover:bg-black/80 text-amber-400 rounded-full px-3 py-1 text-xs font-bold backdrop-blur transition"
+                      >
+                        📌 Pin as Hero
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setSelectedMedia(null)} 
+                      className="bg-black/60 hover:bg-black/80 text-white rounded-full p-2 backdrop-blur transition"
+                      aria-label="Close"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <div className="flex justify-end">
+                <div className="flex justify-between items-center">
+                  {currentUser.is_admin && (
+                    <button
+                      onClick={() => handlePinBillboard(selectedMedia)}
+                      className="text-xs font-bold text-amber-500 underline"
+                    >
+                      📌 Pin to Hero Billboard
+                    </button>
+                  )}
                   <button onClick={() => setSelectedMedia(null)} className="opacity-60 hover:opacity-100 text-lg font-bold p-1">✕</button>
                 </div>
               )}
 
-              {/* Title & Metadata Pills */}
+              {/* Title & Metadata */}
               <div>
                 <h3 className="text-xl font-black">{selectedMedia.title || selectedMedia.name}</h3>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
@@ -1462,8 +1701,71 @@ export default function Home() {
                       {theatricalStatus}
                     </span>
                   )}
+                  {isTv && selectedMedia.number_of_episodes && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800">
+                      {seasonCount} Seasons • {selectedMedia.number_of_episodes} Episodes
+                    </span>
+                  )}
                 </div>
               </div>
+
+              {/* "Where to Stream" JustWatch Badges */}
+              {watchProviders.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-[11px] font-bold opacity-70">Already Streaming On:</p>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    {watchProviders.map(p => (
+                      <div key={p.provider_id} className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 px-2 py-1 rounded-xl shadow-sm" title={p.provider_name}>
+                        <img src={`https://image.tmdb.org/t/p/w92${p.logo_path}`} alt={p.provider_name} className="w-5 h-5 rounded-md object-cover" />
+                        <span className="text-[10px] font-semibold">{p.provider_name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TV Season Selector */}
+              {isTv && seasonCount > 1 && !modalStatus && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-[11px] font-bold opacity-70">Select Seasons to Request:</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSeasons(['All'])}
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition ${
+                        selectedSeasons.includes('All') ? 'bg-amber-500 text-slate-950 border-amber-500' : 'bg-slate-950 border-slate-800 opacity-60'
+                      }`}
+                    >
+                      All Seasons
+                    </button>
+                    {Array.from({ length: seasonCount }).map((_, i) => {
+                      const seasonNum = `S${i + 1}`;
+                      const isSelected = selectedSeasons.includes(seasonNum);
+                      return (
+                        <button
+                          key={seasonNum}
+                          type="button"
+                          onClick={() => {
+                            let updated = selectedSeasons.filter(s => s !== 'All');
+                            if (isSelected) {
+                              updated = updated.filter(s => s !== seasonNum);
+                              if (updated.length === 0) updated = ['All'];
+                            } else {
+                              updated.push(seasonNum);
+                            }
+                            setSelectedSeasons(updated);
+                          }}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition ${
+                            isSelected ? 'bg-amber-500 text-slate-950 border-amber-500' : 'bg-slate-950 border-slate-800 opacity-60'
+                          }`}
+                        >
+                          Season {i + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* YouTube Trailer */}
               {selectedMedia.trailerKey ? (
@@ -1498,23 +1800,26 @@ export default function Home() {
                   </button>
                 ) : (
                   <button
-                    disabled
-                    className="w-full bg-slate-800 text-slate-500 font-bold py-3.5 rounded-2xl text-xs cursor-not-allowed"
+                    onClick={() => handleUpvote(modalMatch.id, modalMatch.upvoted_by)}
+                    disabled={hasUpvoted}
+                    className={`w-full font-bold py-3.5 rounded-2xl text-xs transition shadow flex items-center justify-center gap-1.5 ${
+                      hasUpvoted ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                    }`}
                   >
-                    Already Requested by {modalMatch?.requested_by || 'User'}
+                    {hasUpvoted ? `✓ You & ${upvoteCount - 1} Others Waiting` : `🔥 +1 I Want This Too (${upvoteCount} Waiting)`}
                   </button>
                 )
               ) : (
                 <button
                   onClick={() => handleRequest(selectedMedia)}
-                  disabled={isCapped}
+                  disabled={isCapped || requestsPaused}
                   className={`w-full font-bold py-3.5 rounded-2xl text-xs transition shadow-lg ${
-                    isCapped 
+                    requestsPaused || isCapped
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
                       : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20'
                   }`}
                 >
-                  {isCapped ? 'Limit Reached (10 Pending)' : 'Confirm Request'}
+                  {requestsPaused ? 'Requests Paused' : isCapped ? 'Limit Reached' : 'Confirm Request'}
                 </button>
               )}
             </div>
@@ -1564,7 +1869,7 @@ export default function Home() {
               <label className="text-xs opacity-60">Update Password Hint (optional)</label>
               <input
                 type="text"
-                placeholder="e.g. Favorite sports team"
+                placeholder="e.g. Favorite soccer team"
                 value={tempHint}
                 onChange={(e) => setTempHint(e.target.value)}
                 className={`w-full border px-3.5 py-2.5 rounded-xl text-xs mt-1 outline-none ${isLight ? 'bg-slate-50 border-slate-300' : 'bg-slate-950 border-slate-800 text-white'}`}
