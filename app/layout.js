@@ -1,5 +1,3 @@
-import './globals.css';
-
 export const metadata = {
   title: 'Plex Requests',
   description: 'Request movies and TV shows for Plex',
